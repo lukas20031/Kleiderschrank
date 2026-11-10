@@ -120,27 +120,34 @@
     <button type="button" class="textbtn strong" data-close>Fertig</button>
   </header>
   <div class="sheetbody">
-    <h3>OneDrive</h3>
+    <h3>Cloud-Speicher</h3>
+    <div class="seg" id="provSeg" role="radiogroup" aria-label="Cloud-Speicher">
+      <button type="button" data-prov="">Nur lokal</button>
+      <button type="button" data-prov="onedrive">OneDrive</button>
+      <button type="button" data-prov="dropbox">Dropbox</button>
+    </div>
     <p id="authState" class="muted"></p>
-    <label class="field">Anwendungs-ID (Client-ID) aus Microsoft Entra
-      <input id="clientId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false">
-    </label>
-    <div class="field">Umleitungs-URI (so in Entra als „Single-Page-Anwendung“ eintragen)
-      <div class="row"><code id="redirectUri"></code><button type="button" id="copyRedirect" class="chipbtn">Kopieren</button></div>
+    <div id="provBox">
+      <label class="field"><span id="clientIdLabel"></span>
+        <input id="clientId" autocomplete="off" spellcheck="false" autocapitalize="off">
+      </label>
+      <div class="field"><span id="redirectLabel"></span>
+        <div class="row"><code id="redirectUri"></code><button type="button" id="copyRedirect" class="chipbtn">Kopieren</button></div>
+      </div>
+      <div class="row wrap">
+        <button type="button" id="loginBtn" class="primary">Anmelden</button>
+        <button type="button" id="logoutBtn" class="chipbtn" hidden>Abmelden</button>
+        <button type="button" id="syncNowBtn" class="chipbtn" hidden>Jetzt synchronisieren</button>
+      </div>
+      <p id="lastSync" class="hint"></p>
     </div>
-    <div class="row wrap">
-      <button type="button" id="loginBtn" class="primary">Mit Microsoft anmelden</button>
-      <button type="button" id="logoutBtn" class="chipbtn" hidden>Abmelden</button>
-      <button type="button" id="syncNowBtn" class="chipbtn" hidden>Jetzt synchronisieren</button>
-    </div>
-    <p id="lastSync" class="hint"></p>
 
     <h3>Daten</h3>
     <p id="stats" class="muted"></p>
     <div class="row wrap">
       <button type="button" id="csvBtn" class="chipbtn">Als CSV exportieren</button>
     </div>
-    <p class="hint">Gespeichert wird in OneDrive unter <b>Apps › (Name deiner App-Registrierung)</b>: ein JSON pro Teil im Ordner <code>items</code>, Fotos in <code>fotos</code>.</p>
+    <p class="hint" id="whereHint"></p>
     <p class="hint" id="version"></p>
   </div>
 </dialog>

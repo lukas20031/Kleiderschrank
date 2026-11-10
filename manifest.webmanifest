@@ -1,7 +1,7 @@
 {
   "name": "Kleiderschrank",
   "short_name": "Kleiderschrank",
-  "description": "Digitale Garderobe mit OneDrive-Speicher",
+  "description": "Digitale Garderobe mit OneDrive- oder Dropbox-Speicher",
   "lang": "de",
   "start_url": "./",
   "scope": "./",

@@ -1,15 +1,10 @@
 'use strict';
-/* Kleiderschrank – digitale Garderobe mit OneDrive-Speicher
+/* Kleiderschrank – digitale Garderobe mit OneDrive- oder Dropbox-Speicher
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
- * OneDrive (App-Ordner, Microsoft Graph) synchronisiert.
+ * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
-const CFG = {
-  authority: 'https://login.microsoftonline.com/consumers/oauth2/v2.0',
-  scopes: 'Files.ReadWrite.AppFolder offline_access',
-  graph: 'https://graph.microsoft.com/v1.0',
-};
 
 const FIELDS = [
   { key: 'kategorie', label: 'Kategorie', defaults: ['T-Shirt', 'Hemd', 'Bluse', 'Pullover', 'Hoodie', 'Hose', 'Jeans', 'Shorts', 'Kleid', 'Rock', 'Jacke', 'Mantel', 'Anzug', 'Schuhe', 'Sportbekleidung', 'Unterwäsche', 'Socken', 'Accessoire'] },
@@ -58,6 +53,43 @@ const DB = {
   del(store, key) { return this.tx(store, 'readwrite', (s) => s.delete(key)); },
 };
 
+/* ---------------- Cloud-Anbieter ---------------- */
+const PROVIDERS = {
+  onedrive: {
+    name: 'OneDrive',
+    authorize: 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize',
+    token: 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token',
+    authParams: (silent) => ({
+      response_mode: 'query',
+      scope: 'Files.ReadWrite.AppFolder offline_access',
+      prompt: silent ? 'none' : 'select_account',
+    }),
+    tokenParams: { scope: 'Files.ReadWrite.AppFolder offline_access' },
+    supportsSilent: true,
+    idLabel: 'Anwendungs-ID (Client-ID) aus Microsoft Entra',
+    idPlaceholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+    idPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    redirectLabel: 'Umleitungs-URI (in Entra als Plattform „Single-Page-Anwendung“ eintragen)',
+    where: 'OneDrive unter <b>Apps › (Name deiner App-Registrierung)</b>',
+  },
+  dropbox: {
+    name: 'Dropbox',
+    authorize: 'https://www.dropbox.com/oauth2/authorize',
+    token: 'https://api.dropboxapi.com/oauth2/token',
+    authParams: () => ({ token_access_type: 'offline' }),
+    tokenParams: {},
+    supportsSilent: false, // Dropbox-Refresh-Tokens laufen nicht ab
+    idLabel: 'App-Key aus der Dropbox App Console',
+    idPlaceholder: 'z. B. a1b2c3d4e5f6g7h',
+    idPattern: /^[a-z0-9]{8,24}$/i,
+    redirectLabel: 'Redirect-URI (in der Dropbox App Console unter Settings › OAuth 2 › Redirect URIs eintragen)',
+    where: 'Dropbox unter <b>Apps › (Name deiner Dropbox-App)</b>',
+  },
+};
+const provKey = () => (PROVIDERS[localStorage.getItem('ks_provider')] ? localStorage.getItem('ks_provider') : '');
+const prov = () => PROVIDERS[provKey()] || null;
+const provName = () => prov()?.name || 'Cloud';
+
 /* ---------------- Anmeldung (OAuth 2.0 Auth-Code + PKCE) ---------------- */
 class AuthNeeded extends Error { constructor() { super('Anmeldung erforderlich'); } }
 
@@ -65,35 +97,37 @@ const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replac
 const randStr = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)));
 
 const Auth = {
-  get clientId() { return (localStorage.getItem('ks_clientId') || '').trim(); },
-  set clientId(v) { localStorage.setItem('ks_clientId', v.trim()); },
+  get clientId() { return provKey() ? (localStorage.getItem('ks_clientId_' + provKey()) || '').trim() : ''; },
+  set clientId(v) { if (provKey()) localStorage.setItem('ks_clientId_' + provKey(), v.trim()); },
+  /** Anbieter gewählt und ID eingetragen */
+  get configured() { return !!prov() && !!this.clientId; },
   redirectUri() { return location.origin + location.pathname.replace(/index\.html$/, ''); },
   tokens() { try { return JSON.parse(localStorage.getItem('ks_tokens')); } catch { return null; } },
   saveTokens(t) { localStorage.setItem('ks_tokens', JSON.stringify(t)); localStorage.setItem('ks_wasSignedIn', '1'); },
-  signedIn() { return !!this.tokens(); },
+  signedIn() { return this.configured && !!this.tokens(); },
   wasSignedIn() { return localStorage.getItem('ks_wasSignedIn') === '1'; },
 
   async login(silent = false) {
-    if (!this.clientId) throw new Error('Bitte zuerst die Client-ID eintragen.');
+    const P = prov();
+    if (!P) throw new Error('Bitte zuerst einen Cloud-Speicher wählen.');
+    if (!this.clientId) throw new Error(`Bitte zuerst die ${P === PROVIDERS.dropbox ? 'App-Key' : 'Client-ID'} eintragen.`);
     const verifier = randStr(48);
     const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
     const state = randStr(16);
-    sessionStorage.setItem('ks_pkce', JSON.stringify({ verifier, state, silent }));
+    sessionStorage.setItem('ks_pkce', JSON.stringify({ verifier, state, silent, provider: provKey() }));
     const p = new URLSearchParams({
       client_id: this.clientId,
       response_type: 'code',
       redirect_uri: this.redirectUri(),
-      response_mode: 'query',
-      scope: CFG.scopes,
       state,
       code_challenge: challenge,
       code_challenge_method: 'S256',
-      prompt: silent ? 'none' : 'select_account',
+      ...P.authParams(silent),
     });
-    location.assign(`${CFG.authority}/authorize?${p}`);
+    location.assign(`${P.authorize}?${p}`);
   },
 
-  /** Verarbeitet die Rückkehr von der Microsoft-Anmeldeseite. */
+  /** Verarbeitet die Rückkehr von der Anmeldeseite. */
   async handleRedirect() {
     const p = new URLSearchParams(location.search);
     if (!p.has('code') && !p.has('error')) return;
@@ -102,9 +136,12 @@ const Auth = {
     history.replaceState(null, '', this.redirectUri());
     if (p.get('error')) {
       if (saved?.silent) return; // stille Anmeldung nicht möglich -> Banner zeigt Button
+      if (p.get('error') === 'access_denied') throw new Error('Zugriff wurde nicht erlaubt.');
       throw new Error(p.get('error_description') || p.get('error'));
     }
-    if (!saved || saved.state !== p.get('state')) throw new Error('Anmeldung abgebrochen (ungültiger Status). Bitte erneut versuchen.');
+    if (!saved || saved.state !== p.get('state') || (saved.provider || 'onedrive') !== provKey()) {
+      throw new Error('Anmeldung abgebrochen (ungültiger Status). Bitte erneut versuchen.');
+    }
     await this.tokenRequest({
       grant_type: 'authorization_code',
       code: p.get('code'),
@@ -114,15 +151,21 @@ const Auth = {
   },
 
   async tokenRequest(params) {
-    const body = new URLSearchParams({ client_id: this.clientId, scope: CFG.scopes, ...params });
-    const r = await fetch(`${CFG.authority}/token`, { method: 'POST', body });
+    const P = prov();
+    const body = new URLSearchParams({ client_id: this.clientId, ...P.tokenParams, ...params });
+    const r = await fetch(P.token, { method: 'POST', body });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
       const e = new Error(j.error_description || j.error || `Token-Fehler ${r.status}`);
-      e.code = j.error;
+      e.code = j.error || 'http_' + r.status;
       throw e;
     }
-    const t = { access: j.access_token, refresh: j.refresh_token, exp: Date.now() + (Number(j.expires_in || 3600) - 120) * 1000 };
+    const t = {
+      access: j.access_token,
+      // Dropbox liefert beim Erneuern keinen neuen Refresh-Token – den alten behalten
+      refresh: j.refresh_token || params.refresh_token,
+      exp: Date.now() + (Number(j.expires_in || 3600) - 120) * 1000,
+    };
     this.saveTokens(t);
     return t;
   },
@@ -130,7 +173,7 @@ const Auth = {
   _refreshing: null,
   async accessToken(force = false) {
     const t = this.tokens();
-    if (!t) throw new AuthNeeded();
+    if (!t || !this.configured) throw new AuthNeeded();
     if (!force && Date.now() < t.exp) return t.access;
     if (!t.refresh) { this.clear(); throw new AuthNeeded(); }
     this._refreshing ??= this.tokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh })
@@ -138,7 +181,7 @@ const Auth = {
     try {
       return (await this._refreshing).access;
     } catch (e) {
-      if (e.code && e.code !== 'temporarily_unavailable') { this.clear(); throw new AuthNeeded(); }
+      if (e.code && e.code !== 'temporarily_unavailable' && !/^http_5/.test(e.code)) { this.clear(); throw new AuthNeeded(); }
       throw e;
     }
   },
@@ -146,65 +189,134 @@ const Auth = {
   logout() { this.clear(); localStorage.removeItem('ks_wasSignedIn'); },
 };
 
-/* ---------------- Microsoft Graph (OneDrive-App-Ordner) ---------------- */
+/* ---------------- Gemeinsamer HTTP-Zugriff mit Token, Wiederholung bei 429/5xx ---------------- */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let last401 = false;
+async function authFetch(url, opts = {}, attempt = 0) {
+  const tok = await Auth.accessToken(attempt > 0 && last401);
+  const r = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${tok}` } });
+  last401 = r.status === 401;
+  if ((r.status === 401 || r.status === 429 || r.status >= 500) && attempt < 3) {
+    const wait = r.status === 401 ? 0 : (Number(r.headers.get('Retry-After')) || 2 ** attempt) * 1000;
+    await sleep(wait);
+    return authFetch(url, opts, attempt + 1);
+  }
+  if (r.status === 401) { Auth.clear(); throw new AuthNeeded(); }
+  return r;
+}
+async function httpError(r, what) {
+  let msg = '';
+  try {
+    const t = await r.text();
+    try { const j = JSON.parse(t); msg = j.error?.message || j.error_summary || t; } catch { msg = t; }
+  } catch { /* ignore */ }
+  return new Error(`${what}: ${r.status} ${String(msg).slice(0, 200)}`.trim());
+}
 
-const G = {
-  async req(method, path, { body, headers = {} } = {}, attempt = 0) {
-    const url = path.startsWith('http') ? path : CFG.graph + path;
-    const tok = await Auth.accessToken(attempt > 0 && this._lastWas401);
-    const r = await fetch(url, { method, body, headers: { Authorization: `Bearer ${tok}`, ...headers } });
-    this._lastWas401 = r.status === 401;
-    if ((r.status === 401 || r.status === 429 || r.status >= 500) && attempt < 3) {
-      const wait = r.status === 401 ? 0 : (Number(r.headers.get('Retry-After')) || 2 ** attempt) * 1000;
-      await sleep(wait);
-      return this.req(method, path, { body, headers }, attempt + 1);
-    }
-    if (r.status === 401) { Auth.clear(); throw new AuthNeeded(); }
-    return r;
-  },
-  path(p) { return '/me/drive/special/approot:/' + p.split('/').map(encodeURIComponent).join('/'); },
-  async fail(r, what) {
-    let msg = '';
-    try { msg = (await r.json()).error?.message || ''; } catch { /* ignore */ }
-    return new Error(`${what}: ${r.status} ${msg}`.trim());
-  },
+/* Beide Speicher bieten dieselben vier Funktionen:
+ *   list(ordner)        -> [{ name, etag, meta }]   (nur Dateien; leerer/fehlender Ordner -> [])
+ *   put(pfad, blob, typ) -> etag
+ *   del(pfad)           (fehlende Datei ist kein Fehler)
+ *   download(pfad, meta) -> Blob | null
+ */
+
+/* ---------------- OneDrive (Microsoft Graph, App-Ordner) ---------------- */
+const OneDriveStore = {
+  base: 'https://graph.microsoft.com/v1.0',
+  path(p) { return this.base + '/me/drive/special/approot:/' + p.split('/').map(encodeURIComponent).join('/'); },
   async list(folder) {
     const out = [];
     let url = this.path(folder) + ':/children?$top=200';
     while (url) {
-      const r = await this.req('GET', url);
+      const r = await authFetch(url);
       if (r.status === 404) return out;
-      if (!r.ok) throw await this.fail(r, 'Ordner lesen');
+      if (!r.ok) throw await httpError(r, 'Ordner lesen');
       const j = await r.json();
-      out.push(...j.value);
+      for (const f of j.value) if (f.file) out.push({ name: f.name, etag: f.eTag, meta: f });
       url = j['@odata.nextLink'] || null;
     }
     return out;
   },
   async put(p, blob, type) {
-    const r = await this.req('PUT', this.path(p) + ':/content', { body: blob, headers: { 'Content-Type': type } });
-    if (!r.ok) throw await this.fail(r, `Hochladen ${p}`);
-    return r.json();
+    const r = await authFetch(this.path(p) + ':/content', { method: 'PUT', body: blob, headers: { 'Content-Type': type } });
+    if (!r.ok) throw await httpError(r, `Hochladen ${p}`);
+    return (await r.json()).eTag;
   },
   async del(p) {
-    const r = await this.req('DELETE', this.path(p));
-    if (!r.ok && r.status !== 404) throw await this.fail(r, `Löschen ${p}`);
+    const r = await authFetch(this.path(p), { method: 'DELETE' });
+    if (!r.ok && r.status !== 404) throw await httpError(r, `Löschen ${p}`);
   },
-  /** Lädt eine Datei; nutzt die vorab signierte Download-URL. */
   async download(p, meta) {
     let url = meta?.['@microsoft.graph.downloadUrl'];
     if (!url) {
-      const r = await this.req('GET', this.path(p));
+      const r = await authFetch(this.path(p));
       if (r.status === 404) return null;
-      if (!r.ok) throw await this.fail(r, `Abrufen ${p}`);
+      if (!r.ok) throw await httpError(r, `Abrufen ${p}`);
       url = (await r.json())['@microsoft.graph.downloadUrl'];
     }
-    const d = await fetch(url);
+    const d = await fetch(url); // vorab signierte URL, kein Token nötig
     if (!d.ok) throw new Error(`Download ${p}: ${d.status}`);
     return d.blob();
   },
 };
+
+/* ---------------- Dropbox (API v2, App-Ordner) ---------------- */
+const DropboxStore = {
+  api: 'https://api.dropboxapi.com/2',
+  content: 'https://content.dropboxapi.com/2',
+  rpc(endpoint, body) {
+    return authFetch(this.api + endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  },
+  async notFound(r) {
+    if (r.status !== 409) return false;
+    const t = await r.clone().text().catch(() => '');
+    return t.includes('not_found');
+  },
+  async list(folder) {
+    const out = [];
+    let r = await this.rpc('/files/list_folder', { path: '/' + folder, limit: 2000 });
+    for (;;) {
+      if (await this.notFound(r)) return out;
+      if (!r.ok) throw await httpError(r, 'Ordner lesen');
+      const j = await r.json();
+      for (const e of j.entries) if (e['.tag'] === 'file') out.push({ name: e.name, etag: e.rev, meta: e });
+      if (!j.has_more) return out;
+      r = await this.rpc('/files/list_folder/continue', { cursor: j.cursor });
+    }
+  },
+  async put(p, blob) {
+    const r = await authFetch(this.content + '/files/upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Dropbox-API-Arg': JSON.stringify({ path: '/' + p, mode: 'overwrite', mute: true }),
+      },
+      body: blob,
+    });
+    if (!r.ok) throw await httpError(r, `Hochladen ${p}`);
+    return (await r.json()).rev;
+  },
+  async del(p) {
+    const r = await this.rpc('/files/delete_v2', { path: '/' + p });
+    if (r.ok || await this.notFound(r)) return;
+    throw await httpError(r, `Löschen ${p}`);
+  },
+  async download(p) {
+    const r = await authFetch(this.content + '/files/download', {
+      method: 'POST',
+      headers: { 'Dropbox-API-Arg': JSON.stringify({ path: '/' + p }) },
+    });
+    if (await this.notFound(r)) return null;
+    if (!r.ok) throw await httpError(r, `Download ${p}`);
+    return r.blob();
+  },
+};
+
+const Store = () => (provKey() === 'dropbox' ? DropboxStore : OneDriveStore);
 
 /* ---------------- Zustand ---------------- */
 let items = [];            // sichtbare (nicht gelöschte) Teile
@@ -234,7 +346,7 @@ async function fullUrl(pid) {
   let rec = photoMap.get(pid) || await DB.get('photos', pid);
   if (!rec?.full && Auth.signedIn() && navigator.onLine) {
     try {
-      const blob = await G.download(`fotos/${pid}.jpg`);
+      const blob = await Store().download(`fotos/${pid}.jpg`);
       if (blob) {
         rec = { ...(rec || { id: pid }), full: blob };
         await DB.put('photos', rec);
@@ -295,7 +407,7 @@ function setSync(state, text) {
   $('#syncText').textContent = text;
 }
 function updateSyncIndicator() {
-  if (!Auth.clientId || (!Auth.signedIn() && !Auth.wasSignedIn())) return setSync('local', 'Lokal');
+  if (!Auth.configured || (!Auth.signedIn() && !Auth.wasSignedIn())) return setSync('local', 'Lokal');
   if (!Auth.signedIn()) return setSync('login', 'Anmelden');
   if (!navigator.onLine) return setSync('offline', 'Offline');
   const pending = countPending();
@@ -318,7 +430,7 @@ function scheduleSync(ms = 1500) {
 }
 
 async function sync() {
-  if (!Auth.clientId || !Auth.signedIn()) { await recountPending(); updateSyncIndicator(); return; }
+  if (!Auth.signedIn()) { await recountPending(); updateSyncIndicator(); return; }
   if (!navigator.onLine) { updateSyncIndicator(); return; }
   if (syncing) { syncAgain = true; return; }
   syncing = true;
@@ -335,7 +447,7 @@ async function sync() {
   } catch (e) {
     console.error(e);
     if (e instanceof AuthNeeded) {
-      showBanner('Die OneDrive-Anmeldung ist abgelaufen. Tippe hier, um dich erneut anzumelden.', () => Auth.login());
+      showBanner(`Die ${provName()}-Anmeldung ist abgelaufen. Tippe hier, um dich erneut anzumelden.`, () => Auth.login());
       setSync('login', 'Anmelden');
     } else {
       setSync('error', 'Fehler');
@@ -355,14 +467,15 @@ function itemForUpload(it) {
 
 async function pushChanges() {
   // 1. Fotos zuerst, damit andere Geräte sie finden, sobald das JSON erscheint
+  const S = Store();
   for (const ph of await DB.all('photos')) {
     if (ph.pendingDelete) {
-      await G.del(`fotos/${ph.id}.jpg`);
-      await G.del(`fotos/${ph.id}_t.jpg`);
+      await S.del(`fotos/${ph.id}.jpg`);
+      await S.del(`fotos/${ph.id}_t.jpg`);
       await DB.del('photos', ph.id);
     } else if (ph.pendingUpload) {
-      await G.put(`fotos/${ph.id}.jpg`, ph.full, 'image/jpeg');
-      await G.put(`fotos/${ph.id}_t.jpg`, ph.thumb, 'image/jpeg');
+      await S.put(`fotos/${ph.id}.jpg`, ph.full, 'image/jpeg');
+      await S.put(`fotos/${ph.id}_t.jpg`, ph.thumb, 'image/jpeg');
       const cur = await DB.get('photos', ph.id);
       if (cur && !cur.pendingDelete) { cur.pendingUpload = false; await DB.put('photos', cur); }
     }
@@ -370,15 +483,15 @@ async function pushChanges() {
   // 2. Teile
   for (const it of await DB.all('items')) {
     if (it._deleted) {
-      await G.del(`items/${it.id}.json`);
+      await S.del(`items/${it.id}.json`);
       const cur = await DB.get('items', it.id);
       if (cur?._deleted) await DB.del('items', it.id);
     } else if (it._dirty) {
       const blob = new Blob([JSON.stringify(itemForUpload(it), null, 2)], { type: 'application/json' });
-      const meta = await G.put(`items/${it.id}.json`, blob, 'application/json');
+      const etag = await S.put(`items/${it.id}.json`, blob, 'application/json');
       const cur = await DB.get('items', it.id);
       if (cur && !cur._deleted) {
-        cur._etag = meta.eTag;
+        cur._etag = etag;
         if (cur.updatedAt === it.updatedAt) cur._dirty = false; // inzwischen erneut geändert? dann später nochmal
         await DB.put('items', cur);
       }
@@ -387,24 +500,25 @@ async function pushChanges() {
 }
 
 async function pullChanges() {
-  const remote = await G.list('items');
+  const S = Store();
+  const remote = await S.list('items');
   const local = new Map((await DB.all('items')).map((i) => [i.id, i]));
   const remoteIds = new Set();
 
   for (const f of remote) {
-    if (!f.file || !f.name.endsWith('.json')) continue;
+    if (!f.name.endsWith('.json')) continue;
     const id = f.name.slice(0, -5);
     remoteIds.add(id);
     const l = local.get(id);
     if (l && (l._dirty || l._deleted)) continue;
-    if (l && l._etag === f.eTag) continue;
-    const blob = await G.download(`items/${f.name}`, f);
+    if (l && l._etag === f.etag) continue;
+    const blob = await S.download(`items/${f.name}`, f.meta);
     if (!blob) continue;
     let data;
     try { data = JSON.parse(await blob.text()); } catch { console.warn('Defektes JSON', f.name); continue; }
     const cur = await DB.get('items', id);
     if (cur && (cur._dirty || cur._deleted)) continue;
-    await DB.put('items', { ...data, id, _etag: f.eTag, _dirty: false });
+    await DB.put('items', { ...data, id, _etag: f.etag, _dirty: false });
   }
 
   // Auf anderem Gerät gelöscht
@@ -419,7 +533,7 @@ async function pullChanges() {
   for (const it of all) {
     for (const pid of it.photos || []) {
       if (have.has(pid)) continue;
-      const thumb = await G.download(`fotos/${pid}_t.jpg`);
+      const thumb = await S.download(`fotos/${pid}_t.jpg`);
       if (thumb) await DB.put('photos', { id: pid, itemId: it.id, thumb, full: null });
     }
   }
@@ -489,7 +603,7 @@ function render() {
     return `<button type="button" class="card" data-id="${esc(it.id)}">
       ${url ? `<img class="thumb" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
       ${n > 1 ? `<span class="nphotos">${n} Fotos</span>` : ''}
-      ${it._dirty && Auth.clientId ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
+      ${it._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
       <div class="info"><div class="title">${esc(it.name || 'Ohne Namen')}</div><div class="sub">${esc(sub || it.lagerort || '')}</div></div>
     </button>`;
   }).join('');
@@ -648,20 +762,56 @@ async function deleteItem(id) {
 
 /* ---------------- Einstellungen ---------------- */
 function renderSettings() {
-  $('#clientId').value = Auth.clientId;
-  $('#redirectUri').textContent = Auth.redirectUri();
+  const P = prov();
+  for (const b of $('#provSeg').children) b.classList.toggle('active', b.dataset.prov === provKey());
+  $('#provBox').hidden = !P;
   const signed = Auth.signedIn();
-  $('#authState').textContent = !Auth.clientId
-    ? 'Nicht verbunden – deine Daten liegen nur auf diesem Gerät.'
-    : signed ? 'Verbunden mit OneDrive.' : 'Nicht angemeldet.';
+  $('#authState').textContent = !P
+    ? 'Die Daten liegen nur auf diesem Gerät.'
+    : signed ? `Verbunden mit ${P.name}.`
+      : Auth.clientId ? 'Nicht angemeldet.' : `Trage die ${P.idLabel.split(' ')[0]} ein und melde dich an.`;
+  if (P) {
+    $('#clientIdLabel').textContent = P.idLabel;
+    $('#clientId').placeholder = P.idPlaceholder;
+    $('#clientId').value = Auth.clientId;
+    $('#redirectLabel').textContent = P.redirectLabel;
+    $('#redirectUri').textContent = Auth.redirectUri();
+    $('#loginBtn').textContent = `Mit ${P.name} anmelden`;
+  }
   $('#loginBtn').hidden = signed;
   $('#logoutBtn').hidden = !signed;
   $('#syncNowBtn').hidden = !signed;
   const last = localStorage.getItem('ks_lastSync');
-  $('#lastSync').textContent = last ? `Zuletzt synchronisiert: ${new Date(last).toLocaleString('de-DE')}` : '';
+  $('#lastSync').textContent = last && signed ? `Zuletzt synchronisiert: ${new Date(last).toLocaleString('de-DE')}` : '';
   const nPhotos = items.reduce((n, i) => n + (i.photos || []).length, 0);
   $('#stats').textContent = `${items.length} ${items.length === 1 ? 'Teil' : 'Teile'}, ${nPhotos} ${nPhotos === 1 ? 'Foto' : 'Fotos'}.`;
+  $('#whereHint').innerHTML = P
+    ? `Gespeichert wird in ${P.where}: ein JSON pro Teil im Ordner <code>items</code>, Fotos in <code>fotos</code>.`
+    : 'Ohne Cloud-Speicher liegen die Daten nur in diesem Browser. Für eine Sicherung und mehrere Geräte OneDrive oder Dropbox wählen.';
   $('#version').textContent = `Version ${APP_VERSION}`;
+}
+
+/** Wechselt den Cloud-Speicher. Alles, was auf diesem Gerät liegt, wird in den neuen Speicher hochgeladen;
+ *  der bisherige Speicher bleibt unverändert. */
+async function switchProvider(key) {
+  Auth.logout();
+  sessionStorage.removeItem('ks_silentTried');
+  if (key) localStorage.setItem('ks_provider', key); else localStorage.removeItem('ks_provider');
+  localStorage.removeItem('ks_lastSync');
+  for (const it of await DB.all('items')) {
+    if (it._deleted) { await DB.del('items', it.id); continue; }
+    await DB.put('items', { ...it, _etag: null, _dirty: true });
+  }
+  for (const p of await DB.all('photos')) {
+    if (p.pendingDelete || (!p.full && !p.thumb)) { await DB.del('photos', p.id); continue; }
+    // Fehlt das große Bild lokal (nur Vorschau aus der alten Cloud geladen), wird die Vorschau verwendet.
+    await DB.put('photos', { ...p, full: p.full || p.thumb, pendingUpload: true, pendingDelete: false });
+  }
+  await loadState();
+  await recountPending();
+  render();
+  renderSettings();
+  updateSyncIndicator();
 }
 
 function exportCsv() {
@@ -804,9 +954,16 @@ function wireEvents() {
 
   // Einstellungen
   $('#settingsBtn').addEventListener('click', () => { renderSettings(); $('#settings').showModal(); });
+  $('#provSeg').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-prov]');
+    if (!b || b.dataset.prov === provKey()) return;
+    const target = PROVIDERS[b.dataset.prov]?.name || 'Nur lokal';
+    if (provKey() && items.length && !confirm(`Zu „${target}“ wechseln?\n\nDie Teile auf diesem Gerät bleiben erhalten${b.dataset.prov ? ` und werden nach ${target} hochgeladen` : ''}. Die Daten in ${provName()} bleiben dort unverändert.`)) return;
+    await switchProvider(b.dataset.prov);
+  });
   $('#clientId').addEventListener('change', (e) => {
     const v = e.target.value.trim();
-    if (v && !/^[0-9a-f-]{36}$/i.test(v)) toast('Die Client-ID sieht ungewöhnlich aus – bitte prüfen.');
+    if (v && !prov().idPattern.test(v)) toast(`${prov().idLabel.split(' ')[0]} sieht ungewöhnlich aus – bitte prüfen.`);
     if (v !== Auth.clientId) { Auth.clientId = v; Auth.logout(); }
     renderSettings();
     updateSyncIndicator();
@@ -828,8 +985,8 @@ function wireEvents() {
   $('#csvBtn').addEventListener('click', exportCsv);
 
   syncBtn.addEventListener('click', () => {
-    if (Auth.clientId && !Auth.signedIn()) return Auth.login().catch((e) => toast(e.message));
-    if (!Auth.clientId) { renderSettings(); $('#settings').showModal(); return; }
+    if (Auth.configured && !Auth.signedIn()) return Auth.login().catch((e) => toast(e.message));
+    if (!Auth.configured) { renderSettings(); $('#settings').showModal(); return; }
     sync();
   });
   $('#banner').addEventListener('click', () => bannerAction?.());
@@ -842,6 +999,12 @@ function wireEvents() {
 
 /* ---------------- Start ---------------- */
 async function init() {
+  // Version 1.0 kannte nur OneDrive
+  if (localStorage.getItem('ks_clientId') && !localStorage.getItem('ks_provider')) {
+    localStorage.setItem('ks_provider', 'onedrive');
+    localStorage.setItem('ks_clientId_onedrive', localStorage.getItem('ks_clientId'));
+  }
+  localStorage.removeItem('ks_clientId');
   buildFieldInputs();
   $('#sort').value = localStorage.getItem('ks_sort') || 'new';
   wireEvents();
@@ -858,22 +1021,22 @@ async function init() {
   }
 
   // Anmeldung abgelaufen? Einmal still erneuern (ohne Rückfrage, wenn die Microsoft-Sitzung noch besteht).
-  if (Auth.clientId && Auth.wasSignedIn() && navigator.onLine) {
+  if (Auth.configured && Auth.wasSignedIn() && navigator.onLine) {
     let ok = Auth.signedIn();
     if (ok) { try { await Auth.accessToken(); } catch (e) { ok = !(e instanceof AuthNeeded); } }
     if (!ok) {
-      if (!sessionStorage.getItem('ks_silentTried')) {
+      if (prov().supportsSilent && !sessionStorage.getItem('ks_silentTried')) {
         sessionStorage.setItem('ks_silentTried', '1');
         return Auth.login(true);
       }
-      showBanner('Die OneDrive-Anmeldung ist abgelaufen. Tippe hier, um dich erneut anzumelden.', () => Auth.login());
+      showBanner(`Die ${provName()}-Anmeldung ist abgelaufen. Tippe hier, um dich erneut anzumelden.`, () => Auth.login());
     } else {
       sessionStorage.removeItem('ks_silentTried');
     }
   }
-  if (!Auth.clientId && items.length > 0 && !localStorage.getItem('ks_hintShown')) {
+  if (!Auth.configured && items.length > 0 && !localStorage.getItem('ks_hintShown')) {
     localStorage.setItem('ks_hintShown', '1');
-    showBanner('Deine Daten liegen bisher nur auf diesem Gerät. Tippe hier, um OneDrive zu verbinden.', () => { hideBanner(); renderSettings(); $('#settings').showModal(); });
+    showBanner('Deine Daten liegen bisher nur auf diesem Gerät. Tippe hier, um OneDrive oder Dropbox zu verbinden.', () => { hideBanner(); renderSettings(); $('#settings').showModal(); });
   }
   updateSyncIndicator();
   sync();

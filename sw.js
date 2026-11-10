@@ -1,5 +1,5 @@
 // Service Worker: hält die App offline verfügbar. Bei Änderungen an den Dateien VERSION erhöhen.
-const VERSION = 'ks-1.0.0';
+const VERSION = 'ks-1.1.0';
 const ASSETS = ['./', './index.html', './app.js', './style.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
