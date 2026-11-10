@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -745,9 +745,115 @@ function colorMask(prep, tol, W, H) {
   return m;
 }
 
+/* „Motiv in der Mitte“: Annahme, dass das Kleidungsstück die Bildmitte ausfüllt.
+ * Von der vorherrschenden Farbe in der Bildmitte aus wachsen, dann eingeschlossene Stellen (Aufdruck, Etikett) auffüllen.
+ * Teil 1 (einmal pro Bild): Farben umrechnen, Startfarbe und Startpunkte bestimmen. */
+function prepareCenterMask(base, size = 700) {
+  const t = scaled(base, size);
+  const ctx = t.getContext('2d');
+  ctx.drawImage(base, 0, 0, t.width, t.height);
+  const w = t.width, h = t.height, n = w * h;
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const Y = new Float32Array(n), U = new Float32Array(n), V = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    Y[i] = (0.299 * r + 0.587 * g + 0.114 * b) * 0.6; // Helligkeit schwächer gewichtet (Falten, Schatten)
+    U[i] = -0.169 * r - 0.331 * g + 0.5 * b;
+    V[i] = 0.5 * r - 0.419 * g - 0.081 * b;
+  }
+  // Mittlere Bildhälfte (halbe Breite × halbe Höhe); darin die häufigste Farbgruppe bestimmen (k-means, 4 Gruppen).
+  // Der Stoff überwiegt dort fast immer – auch wenn ein großer Aufdruck genau in der Mitte sitzt.
+  const x0 = Math.round(w * 0.25), x1 = Math.round(w * 0.75), y0 = Math.round(h * 0.25), y1 = Math.round(h * 0.75);
+  const win = [];
+  for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) win.push(y * w + x);
+  let cs = [0.1, 0.4, 0.6, 0.9].map((f) => { const i = win[Math.floor(f * (win.length - 1))]; return [Y[i], U[i], V[i]]; });
+  let lab = new Uint8Array(win.length);
+  for (let it = 0; it < 8; it++) {
+    const sum = cs.map(() => [0, 0, 0]), cnt = cs.map(() => 0);
+    win.forEach((i, j) => {
+      let best = 0, bd = Infinity;
+      cs.forEach((c, k) => { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) { bd = dd; best = k; } });
+      lab[j] = best; sum[best][0] += Y[i]; sum[best][1] += U[i]; sum[best][2] += V[i]; cnt[best]++;
+    });
+    cs = cs.map((c, k) => (cnt[k] ? sum[k].map((v) => v / cnt[k]) : c));
+  }
+  const cnt = cs.map(() => 0); lab.forEach((k) => cnt[k]++);
+  const K = cnt.indexOf(Math.max(...cnt)), ref = cs[K];
+  const seeds = win.filter((_, j) => lab[j] === K);
+  const dref = new Float32Array(n);
+  for (let i = 0; i < n; i++) dref[i] = Math.sqrt((Y[i] - ref[0]) ** 2 + (U[i] - ref[1]) ** 2 + (V[i] - ref[2]) ** 2);
+  return { w, h, Y, U, V, dref, seeds };
+}
+/* Teil 2: wachsen lassen und Löcher füllen. Ergebnis: 1 = Hintergrund (vom Rand erreichbar), 0 = Motiv */
+function centerGrow(prep, tol) {
+  const { w, h, Y, U, V, dref, seeds } = prep;
+  const n = w * h, tl = Math.max(4, tol * 0.2); // Schritt zum Nachbarpixel klein, Abstand zur Stoffarbe bis „tol“
+  const reg = new Uint8Array(n);
+  const q = new Int32Array(n);
+  let qh = 0, qt = 0;
+  for (const i of seeds) if (dref[i] <= tol) { reg[i] = 1; q[qt++] = i; }
+  const step = (p, o) => {
+    if (reg[o] || dref[o] > tol) return;
+    if (Math.sqrt((Y[o] - Y[p]) ** 2 + (U[o] - U[p]) ** 2 + (V[o] - V[p]) ** 2) > tl) return;
+    reg[o] = 1; q[qt++] = o;
+  };
+  while (qh < qt) {
+    const p = q[qh++], x = p % w;
+    if (x > 0) step(p, p - 1);
+    if (x < w - 1) step(p, p + 1);
+    if (p >= w) step(p, p - w);
+    if (p < n - w) step(p, p + w);
+  }
+  // Eingeschlossene Stellen auffüllen: alles, was nicht vom Rand aus erreichbar ist, gehört zum Motiv
+  const out = new Uint8Array(n);
+  qh = qt = 0;
+  const seedOut = (i) => { if (!reg[i] && !out[i]) { out[i] = 1; q[qt++] = i; } };
+  for (let x = 0; x < w; x++) { seedOut(x); seedOut(n - w + x); }
+  for (let y = 0; y < h; y++) { seedOut(y * w); seedOut(y * w + w - 1); }
+  while (qh < qt) {
+    const p = q[qh++], x = p % w;
+    if (x > 0) seedOut(p - 1);
+    if (x < w - 1) seedOut(p + 1);
+    if (p >= w) seedOut(p - w);
+    if (p < n - w) seedOut(p + w);
+  }
+  return out;
+}
+/** Toleranz automatisch wählen: so hoch wie möglich, aber deutlich unter dem Wert, ab dem die Auswahl
+ *  in den Hintergrund „ausläuft“ (erkennbar daran, dass sie plötzlich große Teile des Bildrands berührt). */
+function autoCenterTol(prep) {
+  const { w, h } = prep;
+  let leak = null;
+  for (let tol = 15; tol <= 120; tol += 5) {
+    const out = centerGrow(prep, tol);
+    let edge = 0, tot = 0;
+    for (let x = 0; x < w; x++) { edge += !out[x] + !out[(h - 1) * w + x]; tot += 2; }
+    for (let y = 0; y < h; y++) { edge += !out[y * w] + !out[y * w + w - 1]; tot += 2; }
+    if (edge / tot >= 0.12) { leak = tol; break; }
+  }
+  if (leak === null) return 80;
+  return Math.max(15, Math.round((leak * 0.8) / 5) * 5);
+}
+/* Teil 3: Maske in voller Größe erzeugen */
+function centerMask(prep, tol, W, H) {
+  const { w, h } = prep, n = w * h;
+  const out = centerGrow(prep, tol);
+  const small = newCanvas(w, h);
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(w, h);
+  for (let i = 0; i < n; i++) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255; img.data[i * 4 + 3] = out[i] ? 0 : 255; }
+  sctx.putImageData(img, 0, 0);
+  cleanAlpha(small);
+  const m = newCanvas(W, H);
+  const mctx = m.getContext('2d');
+  mctx.imageSmoothingQuality = 'high';
+  mctx.drawImage(small, 0, 0, W, H);
+  return m;
+}
+
 const Crop = {
   base: null, mask: null, comp: null, rect: null, ratio: null, scale: 1, drag: null, resolve: null,
-  tool: 'crop', brush: 40, undo: [], colorPrep: null, colorTol: 28,
+  tool: 'crop', brush: 40, undo: [], colorPrep: {}, colorMode: 'center', tols: { center: 65, edge: 28 },
 
   get src() { return this.mask ? this.comp : this.base; },
   get transparent() { return !!this.mask || this.baseTransparent; },
@@ -769,7 +875,7 @@ const Crop = {
     if (result) result.transparent = this.transparent;
     this.session++;
     this.setBusy(null);
-    this.undo = []; this.colorPrep = null;
+    this.undo = []; this.colorPrep = {};
     const r = this.resolve;
     this.resolve = null;
     $('#cropDlg').close();
@@ -780,7 +886,7 @@ const Crop = {
     this.base = this.orig;
     this.baseTransparent = this.origTransparent;
     this.mask = null; this.comp = null;
-    this.undo = []; this.colorPrep = null;
+    this.undo = []; this.colorPrep = {};
     this.ratio = null;
     for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === '');
     this.setTool('crop');
@@ -856,7 +962,7 @@ const Crop = {
   rotate(dir) {
     this.base = rotateCanvas(this.base, dir);
     if (this.mask) this.mask = rotateCanvas(this.mask, dir);
-    this.undo = []; this.colorPrep = null;
+    this.undo = []; this.colorPrep = {};
     this.composite();
     this.resetRect();
     this.layout();
@@ -890,7 +996,9 @@ const Crop = {
   },
   showColorPanel(on) {
     $('#colorPanel').hidden = !on;
-    $('#cropColor').classList.toggle('active', on);
+    $('#cropColor').classList.toggle('active', on && this.colorMode === 'edge');
+    $('#cropCenter').classList.toggle('active', on && this.colorMode === 'center');
+    if (on) $('#colorTol').value = this.tols[this.colorMode];
   },
 
   // Ziehen: Rahmen verschieben/größer ziehen – oder mit dem Pinsel malen
@@ -969,12 +1077,31 @@ const Crop = {
     if (!text) this.updateTools();
   },
 
-  /** Einfarbiger Untergrund: Maske aus Randfarben (fast sofort, ohne Download) */
+  /** Farbbasiertes Freistellen (fast sofort, ohne Download):
+   *  'center' = Motiv in der Mitte, 'edge' = einfarbiger Untergrund */
   applyColor(push = true) {
     if (this.baseTransparent) return toast('Dieses Foto ist bereits freigestellt.');
     if (push) this.pushUndo();
-    this.colorPrep ??= prepareColorMask(this.base);
-    this.setMask(colorMask(this.colorPrep, this.colorTol, this.base.width, this.base.height));
+    const mode = this.colorMode, W = this.base.width, H = this.base.height;
+    if (mode === 'center') {
+      if (!this.colorPrep.center) {
+        this.colorPrep.center = prepareCenterMask(this.base);
+        // Für jedes neue Foto passende Toleranz automatisch bestimmen (auf kleinerer Auflösung, schnell)
+        this.tols.center = autoCenterTol(prepareCenterMask(this.base, 350));
+        $('#colorTol').value = this.tols.center;
+      }
+      this.setMask(centerMask(this.colorPrep.center, this.tols.center, W, H));
+    } else {
+      this.colorPrep.edge ??= prepareColorMask(this.base);
+      this.setMask(colorMask(this.colorPrep.edge, this.tols.edge, W, H));
+    }
+  },
+  toggleColor(mode) {
+    if (this.busy) return;
+    if (!$('#colorPanel').hidden && this.colorMode === mode) { this.showColorPanel(false); return; }
+    this.colorMode = mode;
+    this.showColorPanel(true);
+    this.applyColor();
   },
 
   /** KI-Freistellung (@imgly/background-removal) */
@@ -1790,15 +1917,11 @@ function wireEvents() {
   $('#rotR').addEventListener('click', () => Crop.rotate(1));
   $('#cropReset').addEventListener('click', () => Crop.reset());
   $('#cropBg').addEventListener('click', () => Crop.removeBg());
-  $('#cropColor').addEventListener('click', () => {
-    if (Crop.busy) return;
-    if (!$('#colorPanel').hidden) { Crop.showColorPanel(false); return; }
-    Crop.showColorPanel(true);
-    Crop.applyColor();
-  });
+  $('#cropColor').addEventListener('click', () => Crop.toggleColor('edge'));
+  $('#cropCenter').addEventListener('click', () => Crop.toggleColor('center'));
   let tolTimer;
   $('#colorTol').addEventListener('input', (e) => {
-    Crop.colorTol = Number(e.target.value);
+    Crop.tols[Crop.colorMode] = Number(e.target.value);
     clearTimeout(tolTimer);
     tolTimer = setTimeout(() => Crop.applyColor(false), 60);
   });
