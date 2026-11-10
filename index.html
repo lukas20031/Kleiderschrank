@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kleiderschrank</title>
+<meta name="theme-color" content="#1f3a38">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kleiderschrank">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Kleiderschrank</h1>
+  <button id="syncBtn" class="sync" type="button" title="Synchronisieren">
+    <span class="dot"></span><span id="syncText">Lokal</span>
+  </button>
+  <button id="settingsBtn" class="iconbtn" type="button" aria-label="Einstellungen">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<section class="toolbar">
+  <input id="search" type="search" placeholder="Suchen …" autocomplete="off">
+  <button id="filterToggle" class="chipbtn" type="button">Filter <span id="filterCount"></span></button>
+  <select id="sort" aria-label="Sortierung">
+    <option value="new">Neueste</option>
+    <option value="name">Name</option>
+    <option value="kategorie">Kategorie</option>
+    <option value="lagerort">Lagerort</option>
+  </select>
+</section>
+<section id="filters" class="filters" hidden></section>
+
+<main>
+  <p id="count" class="count"></p>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" hidden>
+    <p>Noch nichts erfasst.</p>
+    <p class="muted">Tippe auf <b>+</b>, um dein erstes Kleidungsstück mit Fotos anzulegen.</p>
+  </div>
+</main>
+
+<button id="addBtn" class="fab" type="button" aria-label="Neues Teil">+</button>
+
+<!-- Editor -->
+<dialog id="editor" class="sheet">
+  <form id="editForm" method="dialog">
+    <header class="sheethead">
+      <button type="button" class="textbtn" data-close>Abbrechen</button>
+      <h2 id="editTitle">Neues Teil</h2>
+      <button type="submit" class="textbtn strong">Speichern</button>
+    </header>
+    <div class="sheetbody">
+      <div id="photoStrip" class="photostrip"></div>
+      <label class="addphoto">
+        <input id="photoInput" type="file" accept="image/*" multiple hidden>
+        <span>+ Fotos hinzufügen</span>
+      </label>
+      <p class="hint">Erstes Foto = Titelbild. Tippe ein Foto an, um es zum Titelbild zu machen oder zu löschen.</p>
+
+      <label class="field">Bezeichnung
+        <input name="bezeichnung" required placeholder="z. B. Blaue Levi's 501" autocomplete="off">
+      </label>
+      <div id="fieldGrid" class="fieldgrid"></div>
+
+      <div class="field">Anlass
+        <div id="anlassChips" class="chips"></div>
+        <div class="row">
+          <input id="anlassNew" placeholder="Weiteren Anlass hinzufügen" autocomplete="off">
+          <button type="button" id="anlassAdd" class="chipbtn">Hinzufügen</button>
+        </div>
+      </div>
+
+      <label class="field">Notiz
+        <textarea name="notiz" rows="3" placeholder="optional"></textarea>
+      </label>
+
+      <button type="button" id="deleteBtn" class="danger" hidden>Teil löschen</button>
+      <p id="metaInfo" class="hint"></p>
+    </div>
+  </form>
+</dialog>
+
+<!-- Photo actions -->
+<dialog id="photoDlg" class="photodlg">
+  <img id="photoBig" alt="">
+  <div class="photoacts">
+    <button type="button" id="photoCover" class="chipbtn">Als Titelbild</button>
+    <button type="button" id="photoDelete" class="chipbtn dangerchip">Foto löschen</button>
+    <button type="button" class="chipbtn" data-close>Schließen</button>
+  </div>
+</dialog>
+
+<!-- Detail view -->
+<dialog id="detail" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Zurück</button>
+    <h2 id="detailTitle"></h2>
+    <button type="button" id="detailEdit" class="textbtn strong">Bearbeiten</button>
+  </header>
+  <div class="sheetbody">
+    <div id="detailPhotos" class="gallery"></div>
+    <dl id="detailFields" class="props"></dl>
+  </div>
+</dialog>
+
+<!-- Settings -->
+<dialog id="settings" class="sheet">
+  <header class="sheethead">
+    <span></span>
+    <h2>Einstellungen</h2>
+    <button type="button" class="textbtn strong" data-close>Fertig</button>
+  </header>
+  <div class="sheetbody">
+    <h3>OneDrive</h3>
+    <p id="authState" class="muted"></p>
+    <label class="field">Anwendungs-ID (Client-ID) aus Microsoft Entra
+      <input id="clientId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="field">Umleitungs-URI (so in Entra als „Single-Page-Anwendung“ eintragen)
+      <div class="row"><code id="redirectUri"></code><button type="button" id="copyRedirect" class="chipbtn">Kopieren</button></div>
+    </div>
+    <div class="row wrap">
+      <button type="button" id="loginBtn" class="primary">Mit Microsoft anmelden</button>
+      <button type="button" id="logoutBtn" class="chipbtn" hidden>Abmelden</button>
+      <button type="button" id="syncNowBtn" class="chipbtn" hidden>Jetzt synchronisieren</button>
+    </div>
+    <p id="lastSync" class="hint"></p>
+
+    <h3>Daten</h3>
+    <p id="stats" class="muted"></p>
+    <div class="row wrap">
+      <button type="button" id="csvBtn" class="chipbtn">Als CSV exportieren</button>
+    </div>
+    <p class="hint">Gespeichert wird in OneDrive unter <b>Apps › (Name deiner App-Registrierung)</b>: ein JSON pro Teil im Ordner <code>items</code>, Fotos in <code>fotos</code>.</p>
+    <p class="hint" id="version"></p>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
