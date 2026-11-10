@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -565,16 +565,24 @@ function loadBgLib() {
 // daher leitet ein fester Callback an den jeweils aktuellen Empfänger weiter.
 // Wichtig: der Callback darf nichts zurückgeben, sonst bricht die Bibliothek ab.
 let bgProgress = null;
-const BG_CONFIG = {
-  model: 'isnet_quint8', // schnellstes Modell auf dem Prozessor (WebGPU unterstützt dieses Netz derzeit nicht)
-  output: { format: 'image/png' },
-  progress: (key, cur, total) => { bgProgress?.(key, cur, total); },
-};
+// Modelle: „Schnell“ = isnet_quint8 (~40 MB), „Genau“ = isnet_fp16 (~84 MB). Beide laufen auf dem Prozessor
+// (WebGPU unterstützt dieses Netz derzeit nicht).
+const BG_MODELS = ['isnet_quint8', 'isnet_fp16'];
+const bgModel = () => (BG_MODELS.includes(localStorage.getItem('ks_bgModel')) ? localStorage.getItem('ks_bgModel') : 'isnet_quint8');
+const bgConfigs = {};
+/** Feste Einstellungsobjekte je Modell – die Bibliothek erkennt daran eine bereits geladene Sitzung wieder */
+function bgConfig() {
+  const model = bgModel();
+  bgConfigs[model] ??= { model, output: { format: 'image/png' }, progress: (key, cur, total) => { bgProgress?.(key, cur, total); } };
+  return bgConfigs[model];
+}
 let bgWarm = null;
 /** KI-Modell im Hintergrund vorbereiten, damit das Freistellen beim Antippen sofort startet */
 function warmUpBg() {
-  if (bgWarm || localStorage.getItem('ks_bgUsed') !== '1') return;
-  bgWarm = loadBgLib().then((lib) => lib.preload(BG_CONFIG)).catch((e) => { bgWarm = null; console.warn('Vorladen fehlgeschlagen', e); });
+  const model = bgModel();
+  if (bgWarm?.model === model || localStorage.getItem('ks_bgUsed') !== '1') return;
+  const p = loadBgLib().then((lib) => lib.preload(bgConfig())).catch((e) => { if (bgWarm === p) bgWarm = null; console.warn('Vorladen fehlgeschlagen', e); });
+  bgWarm = p; p.model = model;
 }
 /** Reste entfernen: fast unsichtbare Pixel (Alpha < 32) sowie abgetrennte Flecken.
  *  Behalten werden das größte zusammenhängende Motiv und alle Teile mit mindestens 15 % seiner Fläche
@@ -654,24 +662,106 @@ function alphaBounds(c) {
   return { x: x0 * f, y: y0 * f, w: (x1 - x0 + 1) * f, h: (y1 - y0 + 1) * f };
 }
 
-/* ---------------- Foto drehen / zuschneiden ---------------- */
-const Crop = {
-  src: null, rect: null, ratio: null, scale: 1, drag: null, resolve: null,
+/* ---------------- Foto-Editor: drehen, zuschneiden, freistellen, nachbessern ----------------
+ * Intern getrennt gespeichert:  base = Bildpunkte (gedreht),  mask = Freistell-Maske (Alpha) oder null.
+ * So kann der Pinsel „Wiederherstellen“ weggeschnittene Stellen aus dem Original zurückholen. */
+const newCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const copyCanvas = (src) => { const c = newCanvas(src.width, src.height); c.getContext('2d').drawImage(src, 0, 0); return c; };
+function rotateCanvas(o, dir) {
+  const c = newCanvas(o.height, o.width);
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate(dir * Math.PI / 2);
+  ctx.drawImage(o, -o.width / 2, -o.height / 2);
+  return c;
+}
 
-  /** Öffnet den Editor. Ergebnis: { canvas } | { canvas, skipRest } | null (verworfen) */
+/* „Einfarbiger Untergrund“: alles entfernen, was vom Bildrand aus erreichbar ist und farblich zum Rand passt.
+ * Teil 1 (einmal pro Bild): Farbabstand jedes Pixels zu den typischen Randfarben. */
+function prepareColorMask(base) {
+  const t = scaled(base, 700);
+  const ctx = t.getContext('2d');
+  ctx.drawImage(base, 0, 0, t.width, t.height);
+  const w = t.width, h = t.height, n = w * h;
+  const d = ctx.getImageData(0, 0, w, h).data;
+  // In Helligkeit/Farbe zerlegen; Helligkeit zählt weniger, damit Schatten eher als Untergrund gelten
+  const Y = new Float32Array(n), U = new Float32Array(n), V = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    Y[i] = (0.299 * r + 0.587 * g + 0.114 * b) * 0.6;
+    U[i] = -0.169 * r - 0.331 * g + 0.5 * b;
+    V[i] = 0.5 * r - 0.419 * g - 0.081 * b;
+  }
+  // Randpixel (2 px breit) sammeln und in bis zu 4 Farbgruppen einteilen (k-means)
+  const border = [];
+  for (let x = 0; x < w; x++) for (const y of [0, 1, h - 2, h - 1]) border.push(y * w + x);
+  for (let y = 2; y < h - 2; y++) for (const x of [0, 1, w - 2, w - 1]) border.push(y * w + x);
+  const K = 4;
+  let cs = Array.from({ length: K }, (_, k) => { const i = border[Math.floor((k + 0.5) * border.length / K)]; return [Y[i], U[i], V[i]]; });
+  let counts = new Array(K).fill(0);
+  for (let it = 0; it < 8; it++) {
+    const sum = cs.map(() => [0, 0, 0]); counts = new Array(K).fill(0);
+    for (const i of border) {
+      let best = 0, bd = Infinity;
+      cs.forEach((c, k) => { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) { bd = dd; best = k; } });
+      sum[best][0] += Y[i]; sum[best][1] += U[i]; sum[best][2] += V[i]; counts[best]++;
+    }
+    cs = cs.map((c, k) => (counts[k] ? sum[k].map((v) => v / counts[k]) : c));
+  }
+  // Seltene Randfarben (z. B. ein Ärmel, der den Rand berührt) nicht als Untergrund werten
+  const centers = cs.filter((_, k) => counts[k] >= border.length * 0.08);
+  const dist = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let bd = Infinity;
+    for (const c of centers) { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) bd = dd; }
+    dist[i] = Math.sqrt(bd);
+  }
+  return { w, h, dist, border };
+}
+/* Teil 2 (bei jeder Toleranz-Änderung): vom Rand aus füllen und Maske in voller Größe erzeugen */
+function colorMask(prep, tol, W, H) {
+  const { w, h, dist, border } = prep;
+  const bg = new Uint8Array(w * h);
+  const stack = [];
+  for (const i of border) if (!bg[i] && dist[i] <= tol) { bg[i] = 1; stack.push(i); }
+  while (stack.length) {
+    const p = stack.pop();
+    const x = p % w;
+    if (x > 0 && !bg[p - 1] && dist[p - 1] <= tol) { bg[p - 1] = 1; stack.push(p - 1); }
+    if (x < w - 1 && !bg[p + 1] && dist[p + 1] <= tol) { bg[p + 1] = 1; stack.push(p + 1); }
+    if (p >= w && !bg[p - w] && dist[p - w] <= tol) { bg[p - w] = 1; stack.push(p - w); }
+    if (p < w * (h - 1) && !bg[p + w] && dist[p + w] <= tol) { bg[p + w] = 1; stack.push(p + w); }
+  }
+  const small = newCanvas(w, h);
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = 255; img.data[i * 4 + 3] = bg[i] ? 0 : 255; }
+  sctx.putImageData(img, 0, 0);
+  cleanAlpha(small); // abgetrennte Flecken entfernen
+  const m = newCanvas(W, H);
+  const mctx = m.getContext('2d');
+  mctx.imageSmoothingQuality = 'high';
+  mctx.drawImage(small, 0, 0, W, H); // weiches Hochskalieren = weiche Kanten
+  return m;
+}
+
+const Crop = {
+  base: null, mask: null, comp: null, rect: null, ratio: null, scale: 1, drag: null, resolve: null,
+  tool: 'crop', brush: 40, undo: [], colorPrep: null, colorTol: 28,
+
+  get src() { return this.mask ? this.comp : this.base; },
+  get transparent() { return !!this.mask || this.baseTransparent; },
+
+  /** Öffnet den Editor. Ergebnis: { canvas, transparent } | { …, skipRest } | null (verworfen) */
   edit(canvas, title, moreLeft = false, transparent = false) {
     this.session = (this.session || 0) + 1;
     this.setBusy(null);
-    this.src = canvas;
     this.orig = canvas;
-    this.transparent = this.origTransparent = transparent;
-    this.ratio = null;
-    for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === '');
+    this.origTransparent = transparent;
     $('#cropTitle').textContent = title;
     $('#cropSkipRest').hidden = !moreLeft;
-    this.resetRect();
     $('#cropDlg').showModal();
-    this.layout();
+    this.reset();
     setTimeout(warmUpBg, 400);
     return new Promise((res) => { this.resolve = res; });
   },
@@ -679,13 +769,62 @@ const Crop = {
     if (result) result.transparent = this.transparent;
     this.session++;
     this.setBusy(null);
+    this.undo = []; this.colorPrep = null;
     const r = this.resolve;
     this.resolve = null;
     $('#cropDlg').close();
     r?.(result);
   },
+  /** Alles zurück auf das Originalfoto */
+  reset() {
+    this.base = this.orig;
+    this.baseTransparent = this.origTransparent;
+    this.mask = null; this.comp = null;
+    this.undo = []; this.colorPrep = null;
+    this.ratio = null;
+    for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === '');
+    this.setTool('crop');
+    this.showColorPanel(false);
+    this.resetRect();
+    this.layout();
+  },
+  /** Bild + Maske zusammensetzen */
+  composite() {
+    if (!this.mask) { this.comp = null; return; }
+    if (!this.comp || this.comp.width !== this.base.width || this.comp.height !== this.base.height) this.comp = newCanvas(this.base.width, this.base.height);
+    const ctx = this.comp.getContext('2d');
+    ctx.globalCompositeOperation = 'copy';
+    ctx.drawImage(this.base, 0, 0);
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.drawImage(this.mask, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+  },
+  setMask(m, { autoCrop = true } = {}) {
+    this.mask = m;
+    this.composite();
+    if (autoCrop && m) this.autoCrop(); else if (!m) this.resetRect();
+    this.layout();
+    this.updateTools();
+  },
+  pushUndo() {
+    this.undo.push(this.mask ? copyCanvas(this.mask) : null);
+    if (this.undo.length > 5) this.undo.shift();
+    this.updateTools();
+  },
+  popUndo() {
+    if (!this.undo.length) return;
+    this.setMask(this.undo.pop(), { autoCrop: false });
+  },
+  autoCrop() {
+    this.setRatio(null, false);
+    const b = alphaBounds(this.comp);
+    if (!b) return;
+    const m = Math.max(b.w, b.h) * 0.04, W = this.base.width, H = this.base.height;
+    const x = Math.max(0, b.x - m), y = Math.max(0, b.y - m);
+    this.rect = { x, y, w: Math.min(W, b.x + b.w + m) - x, h: Math.min(H, b.y + b.h + m) - y };
+  },
   resetRect() {
-    const W = this.src.width, H = this.src.height;
+    const W = this.base.width, H = this.base.height;
     if (!this.ratio) { this.rect = { x: 0, y: 0, w: W, h: H }; return; }
     let w = W, h = W / this.ratio;
     if (h > H) { h = H; w = H * this.ratio; }
@@ -694,59 +833,112 @@ const Crop = {
   layout() {
     const stage = $('#cropStage');
     const maxW = stage.clientWidth - 32, maxH = stage.clientHeight - 32;
-    const W = this.src.width, H = this.src.height;
+    const W = this.base.width, H = this.base.height;
     this.scale = Math.min(maxW / W, maxH / H);
     const cw = Math.round(W * this.scale), ch = Math.round(H * this.scale);
     const dpr = window.devicePixelRatio || 1;
     const cv = $('#cropCanvas');
     cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
     cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
-    cv.getContext('2d').drawImage(this.src, 0, 0, cv.width, cv.height);
+    this.redraw();
     this.drawBox();
+  },
+  redraw() {
+    const cv = $('#cropCanvas');
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(this.src, 0, 0, cv.width, cv.height);
   },
   drawBox() {
     const b = $('#cropBox').style, r = this.rect, s = this.scale;
     b.left = r.x * s + 'px'; b.top = r.y * s + 'px'; b.width = r.w * s + 'px'; b.height = r.h * s + 'px';
   },
   rotate(dir) {
-    const o = this.src;
-    const c = document.createElement('canvas');
-    c.width = o.height; c.height = o.width;
-    const ctx = c.getContext('2d');
-    ctx.translate(c.width / 2, c.height / 2);
-    ctx.rotate(dir * Math.PI / 2);
-    ctx.drawImage(o, -o.width / 2, -o.height / 2);
-    this.src = c;
+    this.base = rotateCanvas(this.base, dir);
+    if (this.mask) this.mask = rotateCanvas(this.mask, dir);
+    this.undo = []; this.colorPrep = null;
+    this.composite();
     this.resetRect();
     this.layout();
+    this.updateTools();
+    if (!$('#colorPanel').hidden) this.applyColor(false);
   },
-  setRatio(r) {
+  setRatio(r, apply = true) {
     this.ratio = r || null;
     for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === (r ? String(r) : ''));
-    this.resetRect();
-    this.drawBox();
+    if (apply) { this.resetRect(); this.drawBox(); }
   },
   result() {
-    const r = this.rect;
+    const src = this.src, r = this.rect;
     const x = Math.round(r.x), y = Math.round(r.y), w = Math.round(r.w), h = Math.round(r.h);
-    if (x === 0 && y === 0 && w === this.src.width && h === this.src.height) return this.src;
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    c.getContext('2d').drawImage(this.src, x, y, w, h, 0, 0, w, h);
+    if (x === 0 && y === 0 && w === src.width && h === src.height) return src;
+    const c = newCanvas(w, h);
+    c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, w, h);
     return c;
   },
-  // Ziehen: Rahmen verschieben oder an einer Ecke größer/kleiner ziehen
+
+  /* Werkzeuge: Rahmen (Zuschneiden) oder Pinsel */
+  setTool(t) {
+    this.tool = t;
+    for (const b of $('#cropTools').children) b.classList.toggle('active', b.dataset.tool === t);
+    $('#cropWrap').classList.toggle('painting', t !== 'crop');
+    $('#brushRow').hidden = t === 'crop';
+    $('#cropRatio').hidden = t !== 'crop';
+  },
+  updateTools() {
+    $('#cropUndo').disabled = this.busy || !this.undo.length;
+  },
+  showColorPanel(on) {
+    $('#colorPanel').hidden = !on;
+    $('#cropColor').classList.toggle('active', on);
+  },
+
+  // Ziehen: Rahmen verschieben/größer ziehen – oder mit dem Pinsel malen
+  pos(e) {
+    const r = $('#cropCanvas').getBoundingClientRect();
+    return { x: (e.clientX - r.left) / this.scale, y: (e.clientY - r.top) / this.scale };
+  },
   down(e) {
+    if (this.busy) return;
+    if (this.tool !== 'crop') {
+      e.preventDefault();
+      $('#cropWrap').setPointerCapture?.(e.pointerId);
+      this.pushUndo();
+      if (!this.mask) { // erster Pinselstrich ohne Freistellung: volle Maske anlegen
+        const m = newCanvas(this.base.width, this.base.height);
+        const c = m.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, m.width, m.height);
+        this.mask = m;
+      }
+      this.paintLast = this.pos(e);
+      this.painting = true;
+      this.paint(this.paintLast);
+      return;
+    }
     const h = e.target.dataset.h || (e.target.closest('#cropBox') ? 'move' : null);
     if (!h) return;
     e.preventDefault();
     e.target.setPointerCapture?.(e.pointerId);
     this.drag = { h, px: e.clientX, py: e.clientY, r: { ...this.rect } };
   },
+  paint(p) {
+    const ctx = this.mask.getContext('2d');
+    ctx.globalCompositeOperation = this.tool === 'erase' ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = ctx.fillStyle = '#fff';
+    ctx.lineCap = ctx.lineJoin = 'round';
+    ctx.lineWidth = this.brush / this.scale;
+    ctx.beginPath();
+    ctx.moveTo(this.paintLast.x, this.paintLast.y);
+    ctx.lineTo(p.x + 0.01, p.y);
+    ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+    this.paintLast = p;
+    if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.composite(); this.redraw(); });
+  },
   move(e) {
+    if (this.painting) { this.paint(this.pos(e)); return; }
     const d = this.drag;
     if (!d) return;
-    const W = this.src.width, H = this.src.height, s = this.scale;
+    const W = this.base.width, H = this.base.height, s = this.scale;
     const dx = (e.clientX - d.px) / s, dy = (e.clientY - d.py) / s;
     const r0 = d.r, min = 48 / s;
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -764,46 +956,56 @@ const Crop = {
     }
     this.drawBox();
   },
-  up() { this.drag = null; },
+  up() {
+    this.drag = null;
+    if (this.painting) { this.painting = false; this.composite(); this.redraw(); }
+  },
 
   setBusy(text) {
     this.busy = !!text;
     $('#cropBusy').hidden = !text;
     if (text) $('#cropBusyText').textContent = text;
-    for (const b of document.querySelectorAll('#cropDlg .croptools button, #cropOk')) b.disabled = !!text;
+    for (const b of document.querySelectorAll('#cropDlg .croptools button, #cropDlg .croptools input, #cropOk')) b.disabled = !!text;
+    if (!text) this.updateTools();
   },
+
+  /** Einfarbiger Untergrund: Maske aus Randfarben (fast sofort, ohne Download) */
+  applyColor(push = true) {
+    if (this.baseTransparent) return toast('Dieses Foto ist bereits freigestellt.');
+    if (push) this.pushUndo();
+    this.colorPrep ??= prepareColorMask(this.base);
+    this.setMask(colorMask(this.colorPrep, this.colorTol, this.base.width, this.base.height));
+  },
+
+  /** KI-Freistellung (@imgly/background-removal) */
   async removeBg() {
     if (this.busy) return;
+    if (this.baseTransparent) return toast('Dieses Foto ist bereits freigestellt.');
+    this.showColorPanel(false);
     const session = this.session;
     this.setBusy('Wird vorbereitet …');
     try {
       const { removeBackground } = await loadBgLib();
       // Eingabe auf höchstens 2000 px verkleinern – schneller; gespeichert werden ohnehin 1600 px
-      const input = scaled(this.src, 2000);
-      input.getContext('2d').drawImage(this.src, 0, 0, input.width, input.height);
-      const blob = await toBlob(input, this.transparent ? 'image/png' : 'image/jpeg', 0.95);
+      const input = scaled(this.base, 2000);
+      input.getContext('2d').drawImage(this.base, 0, 0, input.width, input.height);
+      const blob = await toBlob(input, 'image/jpeg', 0.95);
       bgProgress = (key, cur, total) => {
         if (session !== this.session) return;
         if (key.startsWith('fetch:/models')) this.setBusy(`KI-Modell wird geladen … ${Math.round((cur / total) * 100)} %`);
         else if (key.startsWith('compute')) this.setBusy('Hintergrund wird entfernt …');
       };
       if (bgWarm) this.setBusy('KI-Modell wird vorbereitet …');
-      const out = await removeBackground(blob, BG_CONFIG);
+      const out = await removeBackground(blob, bgConfig());
       localStorage.setItem('ks_bgUsed', '1');
       if (session !== this.session) return; // inzwischen abgebrochen
-      const c = await fileToCanvas(out);
-      cleanAlpha(c);
-      this.src = c;
-      this.transparent = true;
-      this.setRatio(null);
-      // Rahmen automatisch eng um das Kleidungsstück legen (mit etwas Rand)
-      const b = alphaBounds(c);
-      if (b) {
-        const m = Math.max(b.w, b.h) * 0.04;
-        const x = Math.max(0, b.x - m), y = Math.max(0, b.y - m);
-        this.rect = { x, y, w: Math.min(c.width, b.x + b.w + m) - x, h: Math.min(c.height, b.y + b.h + m) - y };
-      }
-      this.layout();
+      // Ergebnis als Maske in Originalgröße übernehmen
+      const res = await fileToCanvas(out);
+      cleanAlpha(res);
+      const m = newCanvas(this.base.width, this.base.height);
+      m.getContext('2d').drawImage(res, 0, 0, m.width, m.height);
+      this.pushUndo();
+      this.setMask(m);
     } catch (e) {
       console.error(e);
       if (session === this.session) {
@@ -1386,6 +1588,7 @@ function renderSettings() {
   $('#whereHint').innerHTML = P
     ? `Gespeichert wird in ${P.where}: ein JSON pro Teil im Ordner <code>items</code>, Fotos in <code>fotos</code>.`
     : 'Ohne Cloud-Speicher liegen die Daten nur in diesem Browser. Für eine Sicherung und mehrere Geräte OneDrive oder Dropbox wählen.';
+  for (const b of $('#bgModelSeg').children) b.classList.toggle('active', b.dataset.m === bgModel());
   const cores = self.crossOriginIsolated ? (navigator.hardwareConcurrency || 1) : 1;
   $('#version').textContent = `Version ${APP_VERSION} · Freistellen mit ${cores} ${cores === 1 ? 'Prozessorkern' : 'Prozessorkernen'}`;
 }
@@ -1585,8 +1788,23 @@ function wireEvents() {
   $('#cropDlg').addEventListener('cancel', (e) => { e.preventDefault(); Crop.finish(null); });
   $('#rotL').addEventListener('click', () => Crop.rotate(-1));
   $('#rotR').addEventListener('click', () => Crop.rotate(1));
-  $('#cropReset').addEventListener('click', () => { Crop.src = Crop.orig; Crop.transparent = Crop.origTransparent; Crop.setRatio(null); Crop.layout(); });
+  $('#cropReset').addEventListener('click', () => Crop.reset());
   $('#cropBg').addEventListener('click', () => Crop.removeBg());
+  $('#cropColor').addEventListener('click', () => {
+    if (Crop.busy) return;
+    if (!$('#colorPanel').hidden) { Crop.showColorPanel(false); return; }
+    Crop.showColorPanel(true);
+    Crop.applyColor();
+  });
+  let tolTimer;
+  $('#colorTol').addEventListener('input', (e) => {
+    Crop.colorTol = Number(e.target.value);
+    clearTimeout(tolTimer);
+    tolTimer = setTimeout(() => Crop.applyColor(false), 60);
+  });
+  $('#cropTools').addEventListener('click', (e) => { const b = e.target.closest('[data-tool]'); if (b) Crop.setTool(b.dataset.tool); });
+  $('#brushSize').addEventListener('input', (e) => { Crop.brush = Number(e.target.value); });
+  $('#cropUndo').addEventListener('click', () => Crop.popUndo());
   $('#cropRatio').addEventListener('click', (e) => { const b = e.target.closest('[data-r]'); if (b) Crop.setRatio(Number(b.dataset.r) || null); });
   $('#cropWrap').addEventListener('pointerdown', (e) => Crop.down(e));
   window.addEventListener('pointermove', (e) => Crop.move(e));
@@ -1683,6 +1901,12 @@ function wireEvents() {
   });
   $('#syncNowBtn').addEventListener('click', () => sync());
   $('#csvBtn').addEventListener('click', exportCsv);
+  $('#bgModelSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-m]');
+    if (!b) return;
+    localStorage.setItem('ks_bgModel', b.dataset.m);
+    renderSettings();
+  });
 
   syncBtn.addEventListener('click', () => {
     if (Auth.configured && !Auth.signedIn()) return Auth.login().catch((e) => toast(e.message));

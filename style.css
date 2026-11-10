@@ -280,3 +280,16 @@ code { font-size: 12.5px; background: var(--card); border: 1px solid var(--line)
 @keyframes spin { to { transform: rotate(360deg); } }
 .croptools .bgbtn { width: 100%; max-width: 420px; padding: 10px; font-weight: 600; background: #2f4f4b; border-color: #4a7a73; }
 .croptools button:disabled { opacity: .45; }
+
+/* Editor: Freistell-Werkzeuge */
+.croptools .row { justify-content: center; width: 100%; max-width: 420px; }
+.croptools .row.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.croptools .row.two .bgbtn { width: 100%; padding: 10px 6px; }
+.croptools .bgbtn.active { background: #4a7a73; border-color: #9fe0d5; }
+.croptools .seg.tools { flex: 1; }
+.croptools .seg.tools button { font-size: 13px; padding: 9px 2px; white-space: nowrap; }
+.croptools #cropUndo { font-size: 18px; padding: 6px 14px; }
+.croptools .slider { display: flex; align-items: center; gap: 12px; width: 100%; max-width: 420px; font-size: 14px; }
+.croptools .slider input { flex: 1; accent-color: #9fe0d5; }
+.cropwrap.painting { cursor: crosshair; }
+.cropwrap.painting .cropbox { display: none; }

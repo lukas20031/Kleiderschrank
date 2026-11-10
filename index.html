@@ -162,17 +162,36 @@
     </div>
   </div>
   <div class="croptools">
-    <button type="button" class="chipbtn bgbtn" id="cropBg">✨ Hintergrund entfernen</button>
+    <div class="row two">
+      <button type="button" class="chipbtn bgbtn" id="cropBg">✨ KI freistellen</button>
+      <button type="button" class="chipbtn bgbtn" id="cropColor">▢ Einfarbiger Untergrund</button>
+    </div>
+    <div class="slider" id="colorPanel" hidden>
+      <span>Toleranz</span>
+      <input type="range" id="colorTol" min="4" max="90" value="28" aria-label="Toleranz für den Untergrund">
+    </div>
     <div class="row">
-      <button type="button" class="chipbtn" id="rotL" aria-label="Nach links drehen">⟲ Links</button>
-      <button type="button" class="chipbtn" id="rotR" aria-label="Nach rechts drehen">Rechts ⟳</button>
-      <button type="button" class="chipbtn" id="cropReset">Zurücksetzen</button>
+      <div class="seg tools" id="cropTools">
+        <button type="button" data-tool="crop" class="active">✂ Rahmen</button>
+        <button type="button" data-tool="restore">🖌 Zurückholen</button>
+        <button type="button" data-tool="erase">🧽 Entfernen</button>
+      </div>
+      <button type="button" class="chipbtn" id="cropUndo" disabled aria-label="Rückgängig">↶</button>
+    </div>
+    <div class="slider" id="brushRow" hidden>
+      <span>Pinsel</span>
+      <input type="range" id="brushSize" min="8" max="120" value="40" aria-label="Pinselgröße">
     </div>
     <div class="seg" id="cropRatio">
       <button type="button" data-r="" class="active">Frei</button>
       <button type="button" data-r="0.75">3:4</button>
       <button type="button" data-r="1">1:1</button>
       <button type="button" data-r="1.3333">4:3</button>
+    </div>
+    <div class="row">
+      <button type="button" class="chipbtn" id="rotL" aria-label="Nach links drehen">⟲ Links</button>
+      <button type="button" class="chipbtn" id="rotR" aria-label="Nach rechts drehen">Rechts ⟳</button>
+      <button type="button" class="chipbtn" id="cropReset">Zurücksetzen</button>
     </div>
     <button type="button" class="textbtn" id="cropSkipRest" hidden>Restliche Fotos unverändert übernehmen</button>
   </div>
@@ -220,6 +239,13 @@
       </div>
       <p id="lastSync" class="hint"></p>
     </div>
+
+    <h3>Freistellen (KI)</h3>
+    <div class="seg" id="bgModelSeg">
+      <button type="button" data-m="isnet_quint8">Schnell (~40 MB)</button>
+      <button type="button" data-m="isnet_fp16">Genau (~84 MB)</button>
+    </div>
+    <p class="hint">„Genau“ liefert etwas sauberere Kanten, rechnet aber länger und lädt beim ersten Gebrauch ein eigenes Modell. Bei bedruckten Shirts hilft oft eher „Einfarbiger Untergrund“ im Foto-Editor.</p>
 
     <h3>Daten</h3>
     <p id="stats" class="muted"></p>
