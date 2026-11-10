@@ -340,6 +340,17 @@ body[data-tab="outfits"] #sort { display: none !important; }
 .collage.n3 > :first-child { grid-row: span 2; }
 .collage.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 .card.outfit .noimg { aspect-ratio: 3/4; }
+/* Outfit nach Körperbereich: Oberteil, Unterteil, Schuhe übereinander; Accessoires daneben */
+.collage.look { display: flex; gap: 3px; background: var(--line); padding: 3px; }
+.look .lmain { flex: 3 1 0; display: flex; flex-direction: column; gap: 3px; min-width: 0; min-height: 0; }
+.look .lside { flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; min-height: 0; }
+.look .lrow { flex-basis: 0; flex-shrink: 1; display: flex; justify-content: center; gap: 3px; min-height: 0; }
+.look .lrow > *, .look .lside > * { flex: 1 1 0; min-width: 0; min-height: 0; }
+.look .lside > * { max-height: 30%; }
+.look img { border-radius: 4px; }
+.collage.look img.cut { object-fit: contain; padding: 2px; }
+.outfitlook { max-width: 360px; margin: 0 auto 14px; border-radius: 14px; overflow: hidden; }
+.outfitlook .collage { aspect-ratio: 3/4; }
 
 /* Outfit-Editor */
 .oitems { display: grid; gap: 8px; margin: 4px 0 8px; }

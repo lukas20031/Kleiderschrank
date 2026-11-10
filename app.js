@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.2.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1609,17 +1609,43 @@ function render() {
 
 /* ---------------- Outfits ---------------- */
 const outfitItems = (o) => (o.itemIds || []).map((id) => items.find((i) => i.id === id)).filter(Boolean);
-const outfitTitle = (o) => o.name || outfitItems(o).map(itemTitle).slice(0, 3).join(' + ') || 'Outfit';
+const outfitItemsSorted = (o) => sortBySlot(outfitItems(o));
+const outfitTitle = (o) => o.name || outfitItemsSorted(o).map(itemTitle).slice(0, 3).join(' + ') || 'Outfit';
 const outfitsWith = (itemId) => outfits.filter((o) => (o.itemIds || []).includes(itemId));
-/** Collage aus bis zu 4 Teilen */
-function collageHtml(o) {
-  const its = outfitItems(o).slice(0, 4);
-  if (!its.length) return '<div class="noimg">Noch keine Teile</div>';
-  return `<div class="collage n${its.length}">${its.map((it) => {
-    const pid = (it.photos || [])[0];
-    const url = pid ? thumbUrl(pid) : '';
-    return url ? `<img class="${isPng(pid) ? 'cut' : ''}" loading="lazy" src="${url}" alt="">` : '<span class="ph">–</span>';
-  }).join('')}</div>`;
+/* Anordnung nach Oberkategorie: Oberteile/Jacken oben, Unterteile darunter, Schuhe unten,
+   Taschen & Accessoires in einer Seitenspalte. */
+const SLOT_OF = {
+  'Oberteile': 'top', 'Outdoorbekleidung': 'top', 'Bademode': 'top', 'Ganzkörper': 'full',
+  'Unterteile': 'bottom', 'Schuhe': 'shoes',
+  'Taschen': 'side', 'Accessoires': 'side', 'Unterwäsche & Nachtwäsche': 'side',
+};
+const SLOT_RANK = { top: 0, full: 1, bottom: 2, shoes: 3, side: 4 };
+const slotOf = (it) => SLOT_OF[it.kategorie] || 'side';
+// Innerhalb einer Zeile: Oberteil vor Jacke usw. (Reihenfolge der Kategorienliste)
+const sortBySlot = (its) => its.map((it, i) => [it, i])
+  .sort((a, b) => SLOT_RANK[slotOf(a[0])] - SLOT_RANK[slotOf(b[0])] || catRank(a[0]) - catRank(b[0]) || a[1] - b[1])
+  .map(([it]) => it);
+function photoCell(it) {
+  const pid = (it.photos || [])[0];
+  const url = pid ? thumbUrl(pid) : '';
+  return url ? `<img class="${isPng(pid) ? 'cut' : ''}" loading="lazy" src="${url}" alt="${esc(itemTitle(it))}">` : '<span class="ph">–</span>';
+}
+/** Outfit-Bild: nach Körperbereich übereinander, sonst Collage aus bis zu 4 Teilen */
+function collageHtml(o, big = false) {
+  const all = sortBySlot(outfitItems(o));
+  if (!all.length) return '<div class="noimg">Noch keine Teile</div>';
+  const by = { top: [], full: [], bottom: [], shoes: [], side: [] };
+  for (const it of all) by[slotOf(it)].push(it);
+  const mainRows = [['top', 4], ['full', 7], ['bottom', 4], ['shoes', 2.2]].filter(([k]) => by[k].length);
+  if (mainRows.length >= 2) {
+    const cap = big ? 4 : 3;
+    const rows = mainRows.map(([k, w]) => `<div class="lrow ${k}" style="flex-grow:${w}">${by[k].slice(0, cap).map(photoCell).join('')}</div>`).join('');
+    const side = by.side.slice(0, big ? 5 : 4);
+    return `<div class="collage look${side.length ? ' hasside' : ''}"><div class="lmain">${rows}</div>${
+      side.length ? `<div class="lside">${side.map(photoCell).join('')}</div>` : ''}</div>`;
+  }
+  const its = all.slice(0, 4);
+  return `<div class="collage n${its.length}">${its.map(photoCell).join('')}</div>`;
 }
 // Filter für Outfits (eigener Zustand, gespeichert)
 const outfitFilters = JSON.parse(localStorage.getItem('ks_ofilters') || '{}');
@@ -1666,7 +1692,9 @@ function openOutfitDetail(id) {
   if (!o) return;
   outfitDetailId = id;
   $('#outfitDetailTitle').textContent = outfitTitle(o);
-  const its = outfitItems(o);
+  const its = outfitItemsSorted(o);
+  $('#outfitDetailLook').innerHTML = its.length ? collageHtml(o, true) : '';
+  $('#outfitDetailLook').hidden = !its.length;
   $('#outfitDetailItems').innerHTML = its.map((it) => itemCardHtml(it)).join('') || '<p class="muted">Noch keine Teile.</p>';
   $('#outfitDetailNote').textContent = o.notiz || '';
   $('#outfitDetailNote').hidden = !o.notiz;
@@ -1698,7 +1726,7 @@ function renderOutfitChips() {
   $('#oSeasonChips').innerHTML = chipsHtml(JAHRESZEITEN, oed.jahreszeit, 'season');
 }
 function renderOutfitItems() {
-  const its = oed.itemIds.map((id) => items.find((i) => i.id === id)).filter(Boolean);
+  const its = sortBySlot(oed.itemIds.map((id) => items.find((i) => i.id === id)).filter(Boolean));
   $('#outfitItems').innerHTML = its.map((it) => {
     const pid = (it.photos || [])[0];
     const url = pid ? thumbUrl(pid) : '';
