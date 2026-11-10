@@ -116,6 +116,10 @@
         </div>
       </div>
 
+      <div class="field">Jahreszeit
+        <div id="seasonChips" class="chips"></div>
+      </div>
+
       <label class="field">Notiz
         <textarea name="notiz" rows="3" placeholder="optional"></textarea>
       </label>
@@ -239,6 +243,7 @@
     <button type="button" id="outfitDetailEdit" class="textbtn strong">Bearbeiten</button>
   </header>
   <div class="sheetbody">
+    <dl id="outfitDetailMeta" class="props" hidden></dl>
     <p id="outfitDetailNote" class="onote" hidden></p>
     <div id="outfitDetailItems" class="grid"></div>
   </div>
@@ -259,6 +264,16 @@
       <div class="field">Teile <span id="outfitCount"></span>
         <div id="outfitItems" class="oitems"></div>
         <button type="button" id="outfitAddItems" class="addphoto">+ Teile hinzufügen</button>
+      </div>
+      <div class="field">Anlass
+        <div id="oAnlassChips" class="chips"></div>
+        <div class="row">
+          <input id="oAnlassNew" placeholder="Weiteren Anlass hinzufügen" autocomplete="off">
+          <button type="button" id="oAnlassAdd" class="chipbtn">Hinzufügen</button>
+        </div>
+      </div>
+      <div class="field">Jahreszeit
+        <div id="oSeasonChips" class="chips"></div>
       </div>
       <label class="field">Notiz
         <textarea name="onotiz" rows="2" placeholder="optional"></textarea>

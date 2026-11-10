@@ -271,7 +271,7 @@ code { font-size: 12.5px; background: var(--card); border: 1px solid var(--line)
 .croptools .seg button.active { background: #eee; color: #111; }
 
 /* Freigestellte Fotos (transparent) */
-.cut { object-fit: contain !important; background: #f3f0ea; }
+.cut { object-fit: contain !important; background: var(--line); }
 .card .thumb.cut { padding: 8px; }
 .cropwrap canvas { background: repeating-conic-gradient(#3a3a3a 0 25%, #2a2a2a 0 50%) 0 0 / 16px 16px; }
 .cropstage { position: relative; }
@@ -325,12 +325,13 @@ body { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
 .tabbar button.active { color: var(--brand); font-weight: 650; }
 @media (prefers-color-scheme: dark) { .tabbar button.active { color: #8fd0c6; } }
 .fab { bottom: calc(76px + env(safe-area-inset-bottom)); }
-body[data-tab="outfits"] #filterToggle, body[data-tab="outfits"] #sort, body[data-tab="outfits"] #filters { display: none !important; }
+body[data-tab="outfits"] #sort { display: none !important; }
+#outfitDetailMeta { margin: 0 0 12px; }
 .toast { bottom: calc(150px + env(safe-area-inset-bottom)); }
 
 /* Outfit-Karten mit Collage */
-.collage { aspect-ratio: 3/4; display: grid; gap: 2px; background: var(--line); }
-.collage img, .collage .ph { width: 100%; height: 100%; object-fit: cover; background: #f3f0ea; display: block; min-height: 0; }
+.collage { aspect-ratio: 3/4; display: grid; gap: 2px; background: var(--card); }
+.collage img, .collage .ph { width: 100%; height: 100%; object-fit: cover; background: var(--line); display: block; min-height: 0; }
 .collage .ph { display: grid; place-items: center; color: var(--muted); }
 .collage img.cut { padding: 4px; }
 .collage.n1 { grid-template-columns: 1fr; }
@@ -343,7 +344,7 @@ body[data-tab="outfits"] #filterToggle, body[data-tab="outfits"] #sort, body[dat
 /* Outfit-Editor */
 .oitems { display: grid; gap: 8px; margin: 4px 0 8px; }
 .oitem { display: grid; grid-template-columns: 56px 1fr 40px; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px; color: var(--ink); }
-.oitem img, .oitem .noimg { width: 56px; height: 70px; object-fit: cover; border-radius: 8px; background: #f3f0ea; display: grid; place-items: center; }
+.oitem img, .oitem .noimg { width: 56px; height: 70px; object-fit: cover; border-radius: 8px; background: var(--line); display: grid; place-items: center; }
 .oitem .oname { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oremove { border: 0; background: none; color: var(--muted); font-size: 18px; height: 40px; }
 .onote { white-space: pre-wrap; margin: 0 0 12px; }
@@ -367,3 +368,5 @@ body[data-tab="outfits"] #filterToggle, body[data-tab="outfits"] #sort, body[dat
 #pickDlg .filters { max-height: 38vh; overflow-y: auto; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
 .filters select { min-width: 0; width: 100%; }
 #outfitAddItems { width: 100%; background: none; font: inherit; font-weight: 600; }
+
+.photostrip img { background: var(--line); }

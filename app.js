@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -31,7 +31,7 @@ for (const f of FIELDS) {
   const all = f.groups ? f.groups.flatMap(([, v]) => v) : f.options;
   if (all) { f.all = all; f.order = new Map(all.map((v, i) => [v, i])); }
 }
-const isMulti = (key) => key === 'anlass' || FIELD[key]?.type === 'multi';
+const isMulti = (key) => key === 'anlass' || key === 'jahreszeit' || FIELD[key]?.type === 'multi';
 const hasValue = (v) => v !== undefined && v !== null && v !== '';
 const fieldValues = (it, key) => (isMulti(key) ? (Array.isArray(it[key]) ? it[key] : []) : (hasValue(it[key]) ? [it[key]] : []));
 const INPUT_TYPES = ['text', 'price', 'date', 'url'];           // Felder mit normalem Eingabefeld
@@ -172,6 +172,7 @@ async function migrateItems(list) {
   return changed;
 }
 
+const JAHRESZEITEN = ['Frühling', 'Sommer', 'Herbst', 'Winter'];
 const ANLASS_DEFAULTS = ['Alltag', 'Arbeit', 'Freizeit', 'Sport', 'Outdoor', 'Festlich', 'Urlaub'];
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -1507,9 +1508,10 @@ function valuesFor(key, pool = items) {
   return set;
 }
 
+const SEASON_DEF = { key: 'jahreszeit', label: 'Jahreszeit', order: new Map(JAHRESZEITEN.map((v, i) => [v, i])) };
 /** Auswahlfelder der Filter als HTML (für die Übersicht und die Teile-Auswahl im Outfit) */
 function filterSelectsHtml(fState) {
-  const defs = [...CAT_KEYS, ...FIELDS.filter((f) => !f.noFilter), { key: 'anlass', label: 'Anlass' }];
+  const defs = [...CAT_KEYS, ...FIELDS.filter((f) => !f.noFilter), { key: 'anlass', label: 'Anlass' }, SEASON_DEF];
   // Unterkategorie/Art nur aus der gewählten Kategorie anbieten
   const poolK = fState.kategorie ? items.filter((i) => i.kategorie === fState.kategorie) : items;
   const poolU = fState.unterkategorie ? poolK.filter((i) => i.unterkategorie === fState.unterkategorie) : poolK;
@@ -1560,7 +1562,7 @@ function filterItems(query, fState, sort = 'new') {
       else if (!fieldValues(it, k).includes(v)) return false;
     }
     if (!terms.length) return true;
-    const hay = [it.name, it.notiz, it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...FIELDS.map((f) => fieldText(it, f.key))].join(' ').toLowerCase();
+    const hay = [it.name, it.notiz, it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...(it.jahreszeit || []), ...FIELDS.map((f) => fieldText(it, f.key))].join(' ').toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
   const cmp = (a, b, k) => (k === 'name' ? 0 : String(a[k] || '').localeCompare(String(b[k] || ''), 'de')) || itemTitle(a).localeCompare(itemTitle(b), 'de');
@@ -1619,10 +1621,27 @@ function collageHtml(o) {
     return url ? `<img class="${isPng(pid) ? 'cut' : ''}" loading="lazy" src="${url}" alt="">` : '<span class="ph">–</span>';
   }).join('')}</div>`;
 }
+// Filter für Outfits (eigener Zustand, gespeichert)
+const outfitFilters = JSON.parse(localStorage.getItem('ks_ofilters') || '{}');
+function outfitFilterHtml() {
+  return [{ key: 'anlass', label: 'Anlass' }, SEASON_DEF].map((f) => {
+    const vals = [...valuesFor(f.key, outfits).entries()];
+    if (f.order) vals.sort((a, b) => (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9)); else vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
+    const cur = outfitFilters[f.key] || '';
+    if (cur && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
+    return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
+      vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')}</select></label>`;
+  }).join('') + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
+}
 function renderOutfits() {
+  $('#filters').innerHTML = outfitFilterHtml();
+  const nf = Object.values(outfitFilters).filter(Boolean).length;
+  $('#filterCount').textContent = nf ? `(${nf})` : '';
+  $('#filterToggle').classList.toggle('active', nf > 0);
   const q = $('#search').value.trim().toLowerCase();
   const list = outfits
-    .filter((o) => !q || [outfitTitle(o), o.notiz, ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q))
+    .filter((o) => Object.entries(outfitFilters).every(([k, v]) => !v || (o[k] || []).includes(v)))
+    .filter((o) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   $('#count').textContent = outfits.length
     ? (list.length === outfits.length ? `${outfits.length} ${outfits.length === 1 ? 'Outfit' : 'Outfits'}` : `${list.length} von ${outfits.length} Outfits`)
@@ -1635,7 +1654,7 @@ function renderOutfits() {
     return `<button type="button" class="card outfit" data-outfit="${esc(o.id)}">
       ${collageHtml(o)}
       ${o._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
-      <div class="info"><div class="title${o.name ? '' : ' auto'}">${esc(outfitTitle(o))}</div><div class="sub">${n} ${n === 1 ? 'Teil' : 'Teile'}</div></div>
+      <div class="info"><div class="title${o.name ? '' : ' auto'}">${esc(outfitTitle(o))}</div><div class="sub">${esc([`${n} ${n === 1 ? 'Teil' : 'Teile'}`, ...(o.anlass || []).slice(0, 2)].join(' · '))}</div></div>
     </button>`;
   }).join('');
 }
@@ -1651,6 +1670,9 @@ function openOutfitDetail(id) {
   $('#outfitDetailItems').innerHTML = its.map((it) => itemCardHtml(it)).join('') || '<p class="muted">Noch keine Teile.</p>';
   $('#outfitDetailNote').textContent = o.notiz || '';
   $('#outfitDetailNote').hidden = !o.notiz;
+  const meta = [['Anlass', (o.anlass || []).join(', ')], ['Jahreszeit', (o.jahreszeit || []).join(', ')]].filter(([, v]) => v);
+  $('#outfitDetailMeta').innerHTML = meta.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');
+  $('#outfitDetailMeta').hidden = !meta.length;
   if ($('#outfitDetail').open) $('#outfitDetail').close();
   $('#outfitDetail').showModal();
 }
@@ -1659,13 +1681,21 @@ function openOutfitDetail(id) {
 let oed = null; // { id, isNew, itemIds: [] }
 function openOutfitEditor(id = null) {
   const o = id ? outfits.find((x) => x.id === id) : null;
-  oed = { id: o?.id || uid(), isNew: !o, itemIds: [...(o?.itemIds || [])].filter((x) => items.some((i) => i.id === x)) };
+  oed = {
+    id: o?.id || uid(), isNew: !o, itemIds: [...(o?.itemIds || [])].filter((x) => items.some((i) => i.id === x)),
+    anlass: new Set(o?.anlass || []), jahreszeit: new Set(o?.jahreszeit || []),
+  };
+  renderOutfitChips();
   $('#outfitEditTitle').textContent = o ? 'Outfit bearbeiten' : 'Neues Outfit';
   $('#outfitForm').elements.oname.value = o?.name || '';
   $('#outfitForm').elements.onotiz.value = o?.notiz || '';
   $('#outfitDelete').hidden = !o;
   renderOutfitItems();
   $('#outfitEditor').showModal();
+}
+function renderOutfitChips() {
+  $('#oAnlassChips').innerHTML = chipsHtml(allAnlaesse(oed.anlass), oed.anlass, 'anlass');
+  $('#oSeasonChips').innerHTML = chipsHtml(JAHRESZEITEN, oed.jahreszeit, 'season');
 }
 function renderOutfitItems() {
   const its = oed.itemIds.map((id) => items.find((i) => i.id === id)).filter(Boolean);
@@ -1688,6 +1718,8 @@ async function saveOutfit() {
     name: f.oname.value.trim(),
     notiz: f.onotiz.value.trim(),
     itemIds: oed.itemIds,
+    anlass: [...oed.anlass],
+    jahreszeit: JAHRESZEITEN.filter((j) => oed.jahreszeit.has(j)),
     createdAt: prev?.createdAt || now,
     updatedAt: now,
     _dirty: true,
@@ -1738,7 +1770,7 @@ async function openDetail(id) {
   const rows = [
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
     ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null]),
-    ['Anlass', (it.anlass || []).join(', ')], ['Notiz', it.notiz],
+    ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
   const link = normalizeUrl(it.link);
   $('#detailLink').hidden = !link;
@@ -1849,10 +1881,16 @@ function renderOptions() {
   $('#optList').innerHTML = html || '<p class="muted">Nichts gefunden.</p>';
 }
 
+/** Alle bekannten Anlässe: Vorgaben + bei Teilen und Outfits verwendete */
+function allAnlaesse(extra = []) {
+  return new Set([...ANLASS_DEFAULTS, ...valuesFor('anlass').keys(), ...valuesFor('anlass', outfits).keys(), ...extra]);
+}
+function chipsHtml(options, selected, attr) {
+  return [...options].map((a) => `<button type="button" class="chipbtn${selected.has(a) ? ' active' : ''}" data-${attr}="${esc(a)}">${esc(a)}</button>`).join('');
+}
 function renderAnlass() {
-  const all = new Set([...ANLASS_DEFAULTS, ...valuesFor('anlass').keys(), ...ed.anlass]);
-  $('#anlassChips').innerHTML = [...all].map((a) =>
-    `<button type="button" class="chipbtn${ed.anlass.has(a) ? ' active' : ''}" data-anlass="${esc(a)}">${esc(a)}</button>`).join('');
+  $('#anlassChips').innerHTML = chipsHtml(allAnlaesse(ed.anlass), ed.anlass, 'anlass');
+  $('#seasonChips').innerHTML = chipsHtml(JAHRESZEITEN, ed.jahreszeit, 'season');
 }
 function renderPhotoStrip() {
   $('#photoStrip').innerHTML = ed.photos.map((p, i) => {
@@ -1927,6 +1965,7 @@ function openEditor(id = null) {
     photos: (it?.photos || []).map((pid) => ({ id: pid, isNew: false })),
     removed: [],
     anlass: new Set(it?.anlass || []),
+    jahreszeit: new Set(it?.jahreszeit || []),
     kat: { kategorie: it?.kategorie || '', unterkategorie: it?.unterkategorie || '', typ: it?.typ || '' },
     vals: Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])),
     alt: { ...(it?.alt || {}) },
@@ -1964,6 +2003,7 @@ async function saveEditor() {
     id: ed.id,
     name: form.elements.bezeichnung.value.trim(),
     anlass: [...ed.anlass],
+    jahreszeit: JAHRESZEITEN.filter((j) => ed.jahreszeit.has(j)),
     notiz: form.elements.notiz.value.trim(),
     photos: ed.photos.map((p) => p.id),
     createdAt: prev?.createdAt || now,
@@ -2102,7 +2142,7 @@ async function switchProvider(key) {
 }
 
 function exportCsv() {
-  const cols = [['Bezeichnung', 'name'], ...CAT_KEYS.map((f) => [f.label, f.key]), ...FIELDS.map((f) => [f.label, f.key]), ['Anlass', 'anlass'], ['Notiz', 'notiz'], ['Fotos', 'photos'], ['Angelegt', 'createdAt'], ['Geändert', 'updatedAt']];
+  const cols = [['Bezeichnung', 'name'], ...CAT_KEYS.map((f) => [f.label, f.key]), ...FIELDS.map((f) => [f.label, f.key]), ['Anlass', 'anlass'], ['Jahreszeit', 'jahreszeit'], ['Notiz', 'notiz'], ['Fotos', 'photos'], ['Angelegt', 'createdAt'], ['Geändert', 'updatedAt']];
   const cell = (v) => {
     const s = String(v ?? '');
     return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -2110,7 +2150,7 @@ function exportCsv() {
   const lines = [cols.map((c) => c[0]).join(';')];
   for (const it of filteredItems()) {
     lines.push(cols.map(([, k]) => {
-      if (k === 'anlass' || FIELD[k]) return cell(fieldText(it, k));
+      if (k === 'anlass' || k === 'jahreszeit' || FIELD[k]) return cell(fieldText(it, k));
       if (k === 'photos') return (it.photos || []).length;
       return cell(it[k]);
     }).join(';'));
@@ -2180,6 +2220,27 @@ function wireEvents() {
   });
   $('#outfitDetailEdit').addEventListener('click', () => { $('#outfitDetail').close(); openOutfitEditor(outfitDetailId); });
   $('#outfitAddItems').addEventListener('click', openItemPicker);
+  $('#oAnlassChips').addEventListener('click', (e) => {
+    const a = e.target.dataset.anlass;
+    if (!a) return;
+    oed.anlass.has(a) ? oed.anlass.delete(a) : oed.anlass.add(a);
+    renderOutfitChips();
+  });
+  $('#oSeasonChips').addEventListener('click', (e) => {
+    const j = e.target.dataset.season;
+    if (!j) return;
+    oed.jahreszeit.has(j) ? oed.jahreszeit.delete(j) : oed.jahreszeit.add(j);
+    renderOutfitChips();
+  });
+  const addOAnlass = () => {
+    const v = $('#oAnlassNew').value.trim();
+    if (!v) return;
+    oed.anlass.add(v);
+    $('#oAnlassNew').value = '';
+    renderOutfitChips();
+  };
+  $('#oAnlassAdd').addEventListener('click', addOAnlass);
+  $('#oAnlassNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addOAnlass(); } });
   $('#outfitItems').addEventListener('click', (e) => {
     const r = e.target.closest('[data-remove]');
     if (!r) return;
@@ -2237,12 +2298,22 @@ function wireEvents() {
   $('#filters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
     if (!k) return;
+    if (tab === 'outfits') {
+      outfitFilters[k] = e.target.value;
+      localStorage.setItem('ks_ofilters', JSON.stringify(outfitFilters));
+      return render();
+    }
     setFilter(filters, k, e.target.value);
     localStorage.setItem('ks_filters', JSON.stringify(filters));
     render();
   });
   $('#filters').addEventListener('click', (e) => {
     if (!e.target.closest('[data-reset-filters]')) return;
+    if (tab === 'outfits') {
+      for (const k of Object.keys(outfitFilters)) delete outfitFilters[k];
+      localStorage.setItem('ks_ofilters', '{}');
+      return render();
+    }
     for (const k of Object.keys(filters)) delete filters[k];
     localStorage.setItem('ks_filters', '{}');
     render();
@@ -2412,6 +2483,12 @@ function wireEvents() {
     renderAnlass();
   };
   $('#anlassAdd').addEventListener('click', addAnlass);
+  $('#seasonChips').addEventListener('click', (e) => {
+    const j = e.target.dataset.season;
+    if (!j) return;
+    ed.jahreszeit.has(j) ? ed.jahreszeit.delete(j) : ed.jahreszeit.add(j);
+    renderAnlass();
+  });
   $('#anlassNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addAnlass(); } });
   $('#deleteBtn').addEventListener('click', async () => {
     if (!confirm('Dieses Teil mit allen Fotos löschen?')) return;

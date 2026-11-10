@@ -60,7 +60,7 @@ Fotos lassen sich mit „Foto aufnehmen“ direkt mit der Kamera machen oder üb
 
 ## Gut zu wissen
 
-- **Outfits:** Über die untere Leiste wechselst du zwischen „Teile“ und „Outfits“. Ein Outfit besteht aus Name (optional), Notiz und den enthaltenen Teilen, die du mit Suche und den üblichen Filtern auswählst. Gespeichert wird es als `outfits/<id>.json` mit den IDs der Teile. In der Detailansicht eines Teils steht, in welchen Outfits es vorkommt. Löschst du ein Teil, wird es aus allen Outfits entfernt.
+- **Outfits:** Über die untere Leiste wechselst du zwischen „Teile“ und „Outfits“. Ein Outfit besteht aus Name (optional), Anlass, Jahreszeit, Notiz und den enthaltenen Teilen, die du mit Suche und den üblichen Filtern auswählst. Gespeichert wird es als `outfits/<id>.json` mit den IDs der Teile. Outfits lassen sich nach Anlass und Jahreszeit filtern, Teile zusätzlich nach Jahreszeit. In der Detailansicht eines Teils steht, in welchen Outfits es vorkommt. Löschst du ein Teil, wird es aus allen Outfits entfernt.
 - **Speicherformat (Dropbox und OneDrive gleich):** `Apps/<App-Name>/items/<id>.json` enthält ein Teil mit allen Feldern. Die Fotos liegen in `Apps/<App-Name>/fotos/<fotoId>.jpg`, dazu jeweils `_t.jpg` als Vorschau. Die Daten bleiben also lesbar, auch ohne die App.
 - **Offline:** Du kannst alles ohne Netz erfassen. Ein orangefarbener Punkt auf der Karte bedeutet „noch nicht hochgeladen“. Die Synchronisierung läuft automatisch, sobald du wieder online bist, außerdem beim Öffnen der App und alle 5 Minuten.
 - **Mehrere Geräte:** Wenn dasselbe Teil auf zwei Geräten gleichzeitig geändert wird, gilt die zuletzt hochgeladene Version.
