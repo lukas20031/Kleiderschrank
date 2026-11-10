@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.3';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -15,8 +15,8 @@ const FARB_MAP = new Map(FARBEN);
 const FIELDS = [
   { key: 'farben', label: 'Farbe', type: 'multi', options: FARBEN.map((f) => f[0]), swatch: true, wide: true },
   { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true },
-  { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN },
-  { key: 'marke', label: 'Marke', type: 'text', defaults: [] },
+  { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
+  { key: 'marke', label: 'Marke', type: 'text', defaults: [], wide: true },
   { key: 'lagerort', label: 'Lagerort', type: 'text', defaults: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'], wide: true },
   { key: 'zustand', label: 'Zustand', type: 'chips', options: ZUSTAENDE, wide: true },
 ];
@@ -58,6 +58,8 @@ const CAT = (() => {
   }
   return { order, l1, leaves, groups };
 })();
+/** Anzeigetitel: Bezeichnung, sonst die genaueste gewählte Kategorie */
+const itemTitle = (it) => it.name || it.typ || it.unterkategorie || it.kategorie || 'Ohne Bezeichnung';
 const catPath = (it) => [it.kategorie, it.unterkategorie, it.typ].filter(Boolean).join(' › ');
 const catRank = (it) => {
   if (!it.kategorie) return 1e9;
@@ -719,7 +721,7 @@ function filteredItems() {
     return terms.every((t) => hay.includes(t));
   });
   const sort = $('#sort').value;
-  const cmp = (a, b, k) => String(a[k] || '').localeCompare(String(b[k] || ''), 'de') || String(a.name || '').localeCompare(String(b.name || ''), 'de');
+  const cmp = (a, b, k) => (k === 'name' ? 0 : String(a[k] || '').localeCompare(String(b[k] || ''), 'de')) || itemTitle(a).localeCompare(itemTitle(b), 'de');
   if (sort === 'new') list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   else if (sort === 'kategorie') list.sort((a, b) => catRank(a) - catRank(b) || cmp(a, b, 'name'));
   else list.sort((a, b) => cmp(a, b, sort));
@@ -736,14 +738,15 @@ function render() {
   $('#grid').innerHTML = list.map((it) => {
     const pid = (it.photos || [])[0];
     const url = pid ? thumbUrl(pid) : '';
-    const sub = [it.typ || it.unterkategorie || it.kategorie, it.groesse].filter(Boolean).join(' · ');
+    // Ohne Bezeichnung steht die Kategorie schon im Titel – dann Marke statt Kategorie zeigen
+    const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse].filter(Boolean).join(' · ');
     const farben = fieldValues(it, 'farben');
     const n = (it.photos || []).length;
     return `<button type="button" class="card" data-id="${esc(it.id)}">
       ${url ? `<img class="thumb" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
       ${n > 1 ? `<span class="nphotos">${n} Fotos</span>` : ''}
       ${it._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
-      <div class="info"><div class="title">${esc(it.name || 'Ohne Namen')}</div>
+      <div class="info"><div class="title${it.name ? '' : ' auto'}">${esc(itemTitle(it))}</div>
         <div class="sub">${farben.length ? `<span class="dots" title="${esc(farben.join(', '))}">${farben.slice(0, 5).map(swatch).join('')}</span>` : ''}${esc(sub || it.lagerort || '')}</div></div>
     </button>`;
   }).join('');
@@ -755,7 +758,7 @@ async function openDetail(id) {
   const it = items.find((i) => i.id === id);
   if (!it) return;
   detailId = id;
-  $('#detailTitle').textContent = it.name || 'Ohne Namen';
+  $('#detailTitle').textContent = itemTitle(it);
   const withAlt = (key, text) => [text, it.alt?.[key] ? `(bisher: ${it.alt[key]})` : ''].filter(Boolean).join(' ');
   const rows = [
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
@@ -871,18 +874,23 @@ function renderKatButton() {
   $('#katAlt').hidden = !(ed.katAlt && !p);
   $('#katAlt').textContent = `Bisher „${ed.katAlt}“ – bitte neu zuordnen.`;
 }
-// Aufgeklappte Unterkategorie ("i|j"); ohne Suche sind nur Kategorien und Unterkategorien sichtbar
-let katOpen = null;
+// Ohne Suche zuerst nur die Oberkategorien; Antippen klappt Unterkategorien auf, diese wiederum die Arten.
+let katOpenK = -1;     // aufgeklappte Oberkategorie (Index)
+let katOpen = null;    // aufgeklappte Unterkategorie ("i|j")
 function renderKatList() {
   const q = $('#katSearch').value.trim().toLowerCase();
   const cur = `${ed.kat.kategorie}|${ed.kat.unterkategorie}|${ed.kat.typ}`;
   let html = '';
   KATEGORIEN.forEach(([k, gs], i) => {
+    const openK = !!q || katOpenK === i;
     let inner = '';
+    let any = false;
     gs.forEach(([u, as], j) => {
       const all = !q || k.toLowerCase().includes(q) || u.toLowerCase().includes(q);
       const hits = as.map((a, n) => [a, n]).filter(([a]) => all || a.toLowerCase().includes(q));
       if (!hits.length) return;
+      any = true;
+      if (!openK) return;
       const open = !!q || katOpen === `${i}|${j}`;
       const chosen = ed.kat.kategorie === k && ed.kat.unterkategorie === u;
       inner += `<button type="button" class="kl2${open ? ' open' : ''}${chosen ? ' chosen' : ''}" data-g="${i}|${j}" aria-expanded="${open}">
@@ -892,20 +900,24 @@ function renderKatList() {
           `<button type="button" class="kleaf${`${k}|${u}|${a}` === cur ? ' active' : ''}" data-k="${i}|${j}|${n}">${esc(a)}</button>`).join('')}</div>`;
       }
     });
-    if (inner) html += `<section><h3 class="kl1">${esc(k)}</h3>${inner}</section>`;
+    if (!any) return;
+    const chosenK = ed.kat.kategorie === k;
+    html += `<section><button type="button" class="kl1 kl1btn${openK ? ' open' : ''}${chosenK ? ' chosen' : ''}" data-kk="${i}" aria-expanded="${openK}">
+      <span>${esc(k)}${chosenK && !openK ? `<small>${esc([ed.kat.unterkategorie, ed.kat.typ].filter(Boolean).join(' › '))}</small>` : ''}</span><span class="chev" aria-hidden="true">›</span></button>${inner}</section>`;
   });
   $('#katList').innerHTML = html || '<p class="muted">Nichts gefunden.</p>';
 }
 function openKatPicker() {
   $('#katSearch').value = '';
-  // Gewählte Unterkategorie gleich aufklappen
-  katOpen = null;
-  KATEGORIEN.forEach(([k, gs], i) => gs.forEach(([u], j) => {
-    if (k === ed.kat.kategorie && u === ed.kat.unterkategorie) katOpen = `${i}|${j}`;
-  }));
+  // Gewählte Ober- und Unterkategorie gleich aufklappen
+  katOpenK = -1; katOpen = null;
+  KATEGORIEN.forEach(([k, gs], i) => {
+    if (k === ed.kat.kategorie) katOpenK = i;
+    gs.forEach(([u], j) => { if (k === ed.kat.kategorie && u === ed.kat.unterkategorie) katOpen = `${i}|${j}`; });
+  });
   renderKatList();
   $('#katDlg').showModal();
-  const act = $('#katList .kleaf.active') || $('#katList .kl2.open');
+  const act = $('#katList .kleaf.active') || $('#katList .kl2.open') || $('#katList .kl1btn.open');
   if (act) act.scrollIntoView({ block: 'center' });
 }
 
@@ -1195,6 +1207,15 @@ function wireEvents() {
   $('#katBtn').addEventListener('click', openKatPicker);
   $('#katSearch').addEventListener('input', renderKatList);
   $('#katList').addEventListener('click', (e) => {
+    const kk = e.target.closest('.kl1btn');
+    if (kk) {
+      const i = Number(kk.dataset.kk);
+      katOpenK = katOpenK === i ? -1 : i;
+      if (!katOpen?.startsWith(`${i}|`)) katOpen = null;
+      renderKatList();
+      $(`#katList .kl1btn[data-kk="${i}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
     const g = e.target.closest('.kl2');
     if (g) {
       katOpen = katOpen === g.dataset.g ? null : g.dataset.g;
