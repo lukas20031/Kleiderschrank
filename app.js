@@ -3,20 +3,26 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.10.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
  *   multi  – Mehrfachauswahl im Auswahldialog, gespeichert als Array
  *   single – Einfachauswahl im Auswahldialog
  *   chips  – Einfachauswahl direkt im Editor
- *   text   – Freitext mit Vorschlägen */
+ *   text   – Freitext mit Vorschlägen
+ *   price  – Zahl in Euro (gespeichert als Zahl, angezeigt als „12,99 €“)
+ *   date   – Datum aus dem Kalender (gespeichert als JJJJ-MM-TT), darf leer bleiben
+ *   url    – Link, in der Detailansicht als Knopf zum Öffnen */
 const FARB_MAP = new Map(FARBEN);
 const FIELDS = [
   { key: 'farben', label: 'Farbe', type: 'multi', options: FARBEN.map((f) => f[0]), swatch: true, wide: true },
   { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true },
   { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
   { key: 'marke', label: 'Marke', type: 'text', defaults: [], wide: true },
+  { key: 'preis', label: 'Preis', type: 'price', wide: true, noFilter: true },
+  { key: 'kaufdatum', label: 'Kaufdatum', type: 'date', wide: true, noFilter: true },
+  { key: 'link', label: 'Link zum Produkt', type: 'url', wide: true, noFilter: true },
   { key: 'lagerort', label: 'Lagerort', type: 'text', defaults: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'], wide: true },
   { key: 'zustand', label: 'Zustand', type: 'chips', options: ZUSTAENDE, wide: true },
 ];
@@ -26,8 +32,34 @@ for (const f of FIELDS) {
   if (all) { f.all = all; f.order = new Map(all.map((v, i) => [v, i])); }
 }
 const isMulti = (key) => key === 'anlass' || FIELD[key]?.type === 'multi';
-const fieldValues = (it, key) => (isMulti(key) ? (Array.isArray(it[key]) ? it[key] : []) : (it[key] ? [it[key]] : []));
-const fieldText = (it, key) => fieldValues(it, key).join(', ');
+const hasValue = (v) => v !== undefined && v !== null && v !== '';
+const fieldValues = (it, key) => (isMulti(key) ? (Array.isArray(it[key]) ? it[key] : []) : (hasValue(it[key]) ? [it[key]] : []));
+const INPUT_TYPES = ['text', 'price', 'date', 'url'];           // Felder mit normalem Eingabefeld
+const isInputField = (f) => INPUT_TYPES.includes(f.type);
+const priceFmt = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatPrice = (v) => (hasValue(v) && !Number.isNaN(Number(v)) ? `${priceFmt.format(Number(v))} €` : '');
+const formatDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? new Date(`${v}T12:00:00`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
+/** „12,99“, „12.99“, „1.299,00“, „12 €“ → 12.99; leer/ungültig → '' */
+function parsePrice(s) {
+  let t = String(s || '').replace(/[€\s]/g, '');
+  if (!t) return '';
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : '';
+}
+/** Nur http(s)-Links; „www.zalando.de/…“ bekommt automatisch https:// */
+function normalizeUrl(s) {
+  let t = String(s || '').trim();
+  if (!t) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(t)) t = `https://${t}`;
+  try { const u = new URL(t); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch { return ''; }
+}
+const fieldText = (it, key) => {
+  const t = FIELD[key]?.type;
+  if (t === 'price') return formatPrice(it[key]);
+  if (t === 'date') return formatDate(it[key]);
+  return fieldValues(it, key).join(', ');
+};
 const swatch = (name) => `<span class="sw" style="background:${FARB_MAP.get(name) || '#ccc'}"></span>`;
 const DATA_VERSION = 2;
 
@@ -1144,6 +1176,49 @@ const Crop = {
   },
 };
 
+/* ---------------- Farbe automatisch erkennen ----------------
+ * Pixel des Fotos (freigestellt: nur das Motiv, sonst die mittlere Bildhälfte) werden der nächstgelegenen
+ * Farbe aus der festen Liste zugeordnet (Abstand im Lab-Farbraum). Die häufigste Farbe gewinnt,
+ * eine zweite kommt dazu, wenn sie mindestens 30 % ausmacht. */
+function toLab(r, g, b) {
+  const f = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const R = f(r), G = f(g), B = f(b);
+  const X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047, Yv = R * 0.2126 + G * 0.7152 + B * 0.0722, Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+  const h = (t) => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116);
+  return [116 * h(Yv) - 16, 500 * (h(X) - h(Yv)), 200 * (h(Yv) - h(Z))];
+}
+// Nur Farben mit eindeutigem Farbton; Effektfarben (Gold, Mehrfarbig, Transparent …) und Neon-Doppelungen bleiben außen vor
+const AUTO_COLORS = FARBEN
+  .filter(([name, css]) => /^#[0-9a-f]{6}$/i.test(css) && !name.startsWith('Neon'))
+  .map(([name, css]) => [name, toLab(parseInt(css.slice(1, 3), 16), parseInt(css.slice(3, 5), 16), parseInt(css.slice(5, 7), 16))])
+  .concat([['Jeansblau', toLab(0x76, 0x94, 0xb8)]]);
+function detectColors(canvas, transparent) {
+  const t = scaled(canvas, 120);
+  const ctx = t.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, t.width, t.height);
+  const d = ctx.getImageData(0, 0, t.width, t.height).data;
+  const counts = new Map();
+  let total = 0;
+  for (let y = 0; y < t.height; y++) for (let x = 0; x < t.width; x++) {
+    if (!transparent && (x < t.width * 0.25 || x > t.width * 0.75 || y < t.height * 0.25 || y > t.height * 0.75)) continue;
+    const i = (y * t.width + x) * 4;
+    if (d[i + 3] < 200) continue;
+    const lab = toLab(d[i], d[i + 1], d[i + 2]);
+    let best = null, bd = Infinity;
+    for (const [name, c] of AUTO_COLORS) {
+      const dd = (lab[0] - c[0]) ** 2 + (lab[1] - c[1]) ** 2 + (lab[2] - c[2]) ** 2;
+      if (dd < bd) { bd = dd; best = name; }
+    }
+    counts.set(best, (counts.get(best) || 0) + 1);
+    total++;
+  }
+  if (!total) return [];
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const out = [ranked[0][0]];
+  if (ranked[1] && ranked[1][1] / total >= 0.3) out.push(ranked[1][0]);
+  return FIELD.farben.all.filter((o) => out.includes(o)); // feste Reihenfolge
+}
+
 /** Fotos nacheinander im Editor öffnen und übernehmen */
 async function addPhotos(files) {
   for (let i = 0; i < files.length; i++) {
@@ -1159,6 +1234,11 @@ async function addPhotos(files) {
       }
       const { full, thumb } = await canvasToPhoto(canvas, transparent);
       ed.photos.push({ id: uid() + (transparent ? '.png' : ''), isNew: true, full, thumb, url: URL.createObjectURL(thumb) });
+      // Farbe vorschlagen, solange noch keine gewählt ist (nur beim ersten Foto = Titelbild)
+      if (ed.photos.length === 1 && !ed.vals.farben.length) {
+        const found = detectColors(canvas, transparent);
+        if (found.length) { ed.vals.farben = found; ed.autoColor = true; renderPickFields(); }
+      }
       renderPhotoStrip();
     } catch (e) {
       toast('Foto konnte nicht gelesen werden: ' + e.message);
@@ -1339,7 +1419,7 @@ function valuesFor(key, pool = items) {
 
 function renderFilters() {
   const box = $('#filters');
-  const defs = [...CAT_KEYS, ...FIELDS, { key: 'anlass', label: 'Anlass' }];
+  const defs = [...CAT_KEYS, ...FIELDS.filter((f) => !f.noFilter), { key: 'anlass', label: 'Anlass' }];
   // Unterkategorie/Art nur aus der gewählten Kategorie anbieten
   const poolK = filters.kategorie ? items.filter((i) => i.kategorie === filters.kategorie) : items;
   const poolU = filters.unterkategorie ? poolK.filter((i) => i.unterkategorie === filters.unterkategorie) : poolK;
@@ -1424,9 +1504,12 @@ async function openDetail(id) {
   const withAlt = (key, text) => [text, it.alt?.[key] ? `(bisher: ${it.alt[key]})` : ''].filter(Boolean).join(' ');
   const rows = [
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
-    ...FIELDS.map((f) => [f.label, withAlt(f.key, fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null]),
+    ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
+  const link = normalizeUrl(it.link);
+  $('#detailLink').hidden = !link;
+  if (link) { $('#detailLink').href = link; $('#detailLinkHost').textContent = new URL(link).hostname.replace(/^www\./, ''); }
   $('#detailFields').innerHTML = rows.map(([k, v, sw]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${esc(v).replace(/\n/g, '<br>')}</dd>`).join('')
     || '<dt>–</dt><dd class="muted">Keine Angaben</dd>';
   const gal = $('#detailPhotos');
@@ -1448,10 +1531,20 @@ function buildFieldInputs() {
     if (f.type === 'text') {
       return `<label class="${cls}">${esc(f.label)}<input name="${f.key}" list="dl-${f.key}" autocomplete="off"><datalist id="dl-${f.key}"></datalist>${alt}</label>`;
     }
+    if (f.type === 'price') {
+      return `<label class="${cls}">${esc(f.label)}<span class="unit money"><input name="${f.key}" inputmode="decimal" autocomplete="off" placeholder="0,00"><span>€</span></span>${alt}</label>`;
+    }
+    if (f.type === 'date') {
+      return `<div class="${cls}">${esc(f.label)}<span class="unit"><input type="date" name="${f.key}" max="${new Date().toISOString().slice(0, 10)}"><button type="button" class="clearbtn" data-clear="${f.key}" aria-label="Datum leeren">✕</button></span>${alt}</div>`;
+    }
+    if (f.type === 'url') {
+      return `<label class="${cls}">${esc(f.label)}<input type="url" name="${f.key}" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…">${alt}</label>`;
+    }
     if (f.type === 'chips') {
       return `<div class="${cls}">${esc(f.label)}<div class="chips" id="chips-${f.key}"></div>${alt}</div>`;
     }
-    return `<div class="${cls}">${esc(f.label)}<button type="button" class="katbtn pickbtn" data-pick="${f.key}"></button>${alt}</div>`;
+    const auto = f.key === 'farben' ? '<span class="hint autohint" id="auto-farben" hidden>✨ Automatisch erkannt – tippe zum Ändern</span>' : '';
+    return `<div class="${cls}">${esc(f.label)}<button type="button" class="katbtn pickbtn" data-pick="${f.key}"></button>${auto}${alt}</div>`;
   }).join('');
 }
 function fillDatalists() {
@@ -1462,12 +1555,13 @@ function fillDatalists() {
 }
 /** Auswahlfelder im Editor (Knöpfe, Chips, Hinweise auf alte Werte) neu zeichnen */
 function renderPickFields() {
+  $('#auto-farben').hidden = !ed.autoColor;
   for (const f of FIELDS) {
     const altEl = $(`#alt-${f.key}`);
     const altVal = ed.alt[f.key];
     altEl.hidden = !altVal;
     if (altVal) altEl.textContent = `Bisher „${altVal}“ – bitte neu auswählen.`;
-    if (f.type === 'text') continue;
+    if (isInputField(f)) continue;
     if (f.type === 'chips') {
       $(`#chips-${f.key}`).innerHTML = f.options.map((o) =>
         `<button type="button" class="chipbtn${ed.vals[f.key] === o ? ' active' : ''}" data-chip="${f.key}" data-val="${esc(o)}">${esc(o)}</button>`).join('');
@@ -1595,14 +1689,17 @@ function openEditor(id = null) {
     removed: [],
     anlass: new Set(it?.anlass || []),
     kat: { kategorie: it?.kategorie || '', unterkategorie: it?.unterkategorie || '', typ: it?.typ || '' },
-    vals: Object.fromEntries(FIELDS.filter((f) => f.type !== 'text').map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])),
+    vals: Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])),
     alt: { ...(it?.alt || {}) },
     katAlt: it?.kategorieAlt || '',
   };
   renderKatButton();
   $('#editTitle').textContent = it ? 'Bearbeiten' : 'Neues Teil';
   form.elements.bezeichnung.value = it?.name || '';
-  for (const f of FIELDS.filter((x) => x.type === 'text')) form.elements[f.key].value = it?.[f.key] || '';
+  for (const f of FIELDS.filter(isInputField)) {
+    const v = it?.[f.key];
+    form.elements[f.key].value = f.type === 'price' ? (hasValue(v) ? priceFmt.format(Number(v)) : '') : (v || '');
+  }
   form.elements.notiz.value = it?.notiz || '';
   if (!it) {
     // Lagerort vom letzten Eintrag vorschlagen – spart Tipparbeit beim Durcherfassen
@@ -1635,7 +1732,11 @@ async function saveEditor() {
     _dirty: true,
   };
   for (const f of FIELDS) {
-    it[f.key] = f.type === 'text' ? form.elements[f.key].value.trim() : ed.vals[f.key];
+    const raw = isInputField(f) ? form.elements[f.key].value.trim() : null;
+    if (f.type === 'price') it[f.key] = parsePrice(raw);
+    else if (f.type === 'url') it[f.key] = normalizeUrl(raw);
+    else if (f.type === 'date') it[f.key] = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
+    else it[f.key] = isInputField(f) ? raw : ed.vals[f.key];
     if (fieldValues(it, f.key).length) delete ed.alt[f.key];
   }
   if (Object.keys(ed.alt).length) it.alt = ed.alt; else delete it.alt;
@@ -1815,6 +1916,24 @@ function wireEvents() {
     render();
   });
 
+  // Datum leeren, Preis beim Verlassen schön formatieren, ungültigen Preis/Link markieren
+  $('#fieldGrid').addEventListener('click', (e) => {
+    const c = e.target.closest('[data-clear]');
+    if (c) { $('#editForm').elements[c.dataset.clear].value = ''; }
+  });
+  $('#fieldGrid').addEventListener('focusout', (e) => {
+    const el = e.target;
+    if (el.name === 'preis' && el.value.trim()) {
+      const n = parsePrice(el.value);
+      el.classList.toggle('invalid', n === '');
+      if (n !== '') el.value = priceFmt.format(n);
+    }
+    if (el.name === 'link' && el.value.trim()) {
+      const u = normalizeUrl(el.value);
+      el.classList.toggle('invalid', !u);
+      if (u) el.value = u;
+    }
+  });
   // Auswahlfelder
   $('#fieldGrid').addEventListener('click', (e) => {
     const pick = e.target.closest('[data-pick]');
@@ -1843,6 +1962,7 @@ function wireEvents() {
       const set = new Set(ed.vals[optKey]);
       set.has(v) ? set.delete(v) : set.add(v);
       ed.vals[optKey] = f.all.filter((o) => set.has(o)); // feste Reihenfolge
+      if (optKey === 'farben') ed.autoColor = false;
       renderOptions();
     } else {
       ed.vals[optKey] = v;
@@ -1851,6 +1971,7 @@ function wireEvents() {
   });
   $('#optClear').addEventListener('click', () => {
     ed.vals[optKey] = FIELD[optKey].type === 'multi' ? [] : '';
+    if (optKey === 'farben') ed.autoColor = false;
     if (FIELD[optKey].type === 'multi') renderOptions(); else $('#optDlg').close();
   });
   $('#optDlg').addEventListener('close', () => { if (ed) renderPickFields(); });
