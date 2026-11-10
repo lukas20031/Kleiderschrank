@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -561,6 +561,21 @@ function loadBgLib() {
   bgLib ??= import('@imgly/background-removal').catch((e) => { bgLib = null; throw e; });
   return bgLib;
 }
+// Fortschritt: Die Bibliothek merkt sich die Einstellungen der ersten Nutzung (inkl. Callback),
+// daher leitet ein fester Callback an den jeweils aktuellen Empfänger weiter.
+// Wichtig: der Callback darf nichts zurückgeben, sonst bricht die Bibliothek ab.
+let bgProgress = null;
+const BG_CONFIG = {
+  model: 'isnet_quint8', // schnellstes Modell auf dem Prozessor (WebGPU unterstützt dieses Netz derzeit nicht)
+  output: { format: 'image/png' },
+  progress: (key, cur, total) => { bgProgress?.(key, cur, total); },
+};
+let bgWarm = null;
+/** KI-Modell im Hintergrund vorbereiten, damit das Freistellen beim Antippen sofort startet */
+function warmUpBg() {
+  if (bgWarm || localStorage.getItem('ks_bgUsed') !== '1') return;
+  bgWarm = loadBgLib().then((lib) => lib.preload(BG_CONFIG)).catch((e) => { bgWarm = null; console.warn('Vorladen fehlgeschlagen', e); });
+}
 /** Reste entfernen: fast unsichtbare Pixel (Alpha < 32) sowie abgetrennte Flecken.
  *  Behalten werden das größte zusammenhängende Motiv und alle Teile mit mindestens 15 % seiner Fläche
  *  (z. B. der zweite Schuh eines Paars). */
@@ -657,6 +672,7 @@ const Crop = {
     this.resetRect();
     $('#cropDlg').showModal();
     this.layout();
+    setTimeout(warmUpBg, 400);
     return new Promise((res) => { this.resolve = res; });
   },
   finish(result) {
@@ -766,15 +782,14 @@ const Crop = {
       const input = scaled(this.src, 2000);
       input.getContext('2d').drawImage(this.src, 0, 0, input.width, input.height);
       const blob = await toBlob(input, this.transparent ? 'image/png' : 'image/jpeg', 0.95);
-      const out = await removeBackground(blob, {
-        model: 'isnet_quint8',
-        output: { format: 'image/png' },
-        progress: (key, cur, total) => {
-          if (session !== this.session) return;
-          if (key.startsWith('fetch:/models')) this.setBusy(`KI-Modell wird geladen … ${Math.round((cur / total) * 100)} %`);
-          else if (key.startsWith('compute')) this.setBusy('Hintergrund wird entfernt …');
-        }, // Hinweis: der Callback darf nichts zurückgeben, sonst bricht die Bibliothek ab
-      });
+      bgProgress = (key, cur, total) => {
+        if (session !== this.session) return;
+        if (key.startsWith('fetch:/models')) this.setBusy(`KI-Modell wird geladen … ${Math.round((cur / total) * 100)} %`);
+        else if (key.startsWith('compute')) this.setBusy('Hintergrund wird entfernt …');
+      };
+      if (bgWarm) this.setBusy('KI-Modell wird vorbereitet …');
+      const out = await removeBackground(blob, BG_CONFIG);
+      localStorage.setItem('ks_bgUsed', '1');
       if (session !== this.session) return; // inzwischen abgebrochen
       const c = await fileToCanvas(out);
       cleanAlpha(c);
@@ -1371,7 +1386,8 @@ function renderSettings() {
   $('#whereHint').innerHTML = P
     ? `Gespeichert wird in ${P.where}: ein JSON pro Teil im Ordner <code>items</code>, Fotos in <code>fotos</code>.`
     : 'Ohne Cloud-Speicher liegen die Daten nur in diesem Browser. Für eine Sicherung und mehrere Geräte OneDrive oder Dropbox wählen.';
-  $('#version').textContent = `Version ${APP_VERSION}`;
+  const cores = self.crossOriginIsolated ? (navigator.hardwareConcurrency || 1) : 1;
+  $('#version').textContent = `Version ${APP_VERSION} · Freistellen mit ${cores} ${cores === 1 ? 'Prozessorkern' : 'Prozessorkernen'}`;
 }
 
 /** Wechselt den Cloud-Speicher. Alles, was auf diesem Gerät liegt, wird in den neuen Speicher hochgeladen;
