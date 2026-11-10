@@ -45,6 +45,10 @@
     <option value="name">Name</option>
     <option value="kategorie">Kategorie</option>
     <option value="lagerort">Lagerort</option>
+    <option value="worn_recent">Zuletzt getragen</option>
+    <option value="worn_old">Lange nicht getragen</option>
+    <option value="worn_most">Am häufigsten getragen</option>
+    <option value="cpw">Preis pro Tragen</option>
   </select>
 </section>
 <section id="filters" class="filters" hidden></section>
@@ -52,6 +56,8 @@
 <main>
   <p id="count" class="count"></p>
   <div id="grid" class="grid"></div>
+  <section id="planView" class="view" hidden></section>
+  <section id="statsView" class="view" hidden></section>
   <div id="emptyOutfits" class="empty" hidden>
     <p>Noch keine Outfits.</p>
     <p class="muted">Tippe auf <b>+</b>, um aus deinen Teilen ein Outfit zusammenzustellen.</p>
@@ -72,6 +78,14 @@
   <button type="button" data-tab="outfits">
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
     <span>Outfits</span>
+  </button>
+  <button type="button" data-tab="plan">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
+    <span>Planer</span>
+  </button>
+  <button type="button" data-tab="stats">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>
+    <span>Statistik</span>
   </button>
 </nav>
 
@@ -123,6 +137,11 @@
       <label class="field">Notiz
         <textarea name="notiz" rows="3" placeholder="optional"></textarea>
       </label>
+
+      <div class="field">Status
+        <div class="seg small" id="statusSeg"></div>
+        <span class="hint">Aussortierte, verkaufte und verschenkte Teile verschwinden aus der Übersicht (Filter „Status“ zeigt sie wieder), bleiben aber in Outfits erhalten.</span>
+      </div>
 
       <button type="button" id="deleteBtn" class="danger" hidden>Teil löschen</button>
       <p id="metaInfo" class="hint"></p>
@@ -228,10 +247,13 @@
     <div id="detailPhotos" class="gallery"></div>
     <dl id="detailFields" class="props"></dl>
     <a id="detailLink" class="linkbtn" target="_blank" rel="noopener noreferrer" hidden>Produkt öffnen <span id="detailLinkHost"></span> ↗</a>
+    <div id="detailWear" class="wearbox"></div>
     <div id="detailOutfitsBox" hidden>
       <h3>In Outfits</h3>
       <div id="detailOutfits" class="olinks"></div>
     </div>
+    <button type="button" id="detailCopy" class="chipbtn copybtn">Teil duplizieren</button>
+    <p class="hint">Duplizieren übernimmt alle Angaben ohne Fotos – praktisch für dasselbe Teil in einer anderen Farbe.</p>
   </div>
 </dialog>
 
@@ -246,6 +268,8 @@
     <div id="outfitDetailLook" class="outfitlook" hidden></div>
     <dl id="outfitDetailMeta" class="props" hidden></dl>
     <p id="outfitDetailNote" class="onote" hidden></p>
+    <div id="outfitWear" class="wearbox"></div>
+    <h3>Teile</h3>
     <div id="outfitDetailItems" class="grid"></div>
   </div>
 </dialog>
@@ -297,6 +321,60 @@
   </div>
   <section id="pickFilters" class="filters" hidden></section>
   <div class="sheetbody"><div id="pickGrid" class="grid"></div></div>
+</dialog>
+
+<!-- Planer: Tag -->
+<dialog id="dayDlg" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Zurück</button>
+    <h2 id="dayTitle"></h2>
+    <span></span>
+  </header>
+  <div class="sheetbody" id="dayBody"></div>
+</dialog>
+
+<!-- Outfit auswählen -->
+<dialog id="opickDlg" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Abbrechen</button>
+    <h2 id="opickTitle">Outfit wählen</h2>
+    <span></span>
+  </header>
+  <div class="picktools"><input id="opickSearch" type="search" placeholder="Suchen …" autocomplete="off"></div>
+  <div class="sheetbody"><div id="opickGrid" class="grid outfits"></div></div>
+</dialog>
+
+<!-- Packliste -->
+<dialog id="packDlg" class="sheet">
+  <form id="packForm" method="dialog">
+    <header class="sheethead">
+      <span></span>
+      <h2 id="packTitle">Packliste</h2>
+      <button type="submit" class="textbtn strong">Fertig</button>
+    </header>
+    <div class="sheetbody">
+      <label class="field">Name
+        <input name="pname" placeholder="z. B. Wochenende Berlin" autocomplete="off">
+      </label>
+      <div class="row two">
+        <label class="field">Von <input name="pvon" type="date"></label>
+        <label class="field">Bis <input name="pbis" type="date"></label>
+      </div>
+      <div class="field">Teile <span id="packProgress" class="muted"></span>
+        <div id="packItems" class="oitems"></div>
+        <div class="row two">
+          <button type="button" id="packAddItems" class="addphoto">+ Teile</button>
+          <button type="button" id="packAddOutfit" class="addphoto">+ Outfit</button>
+        </div>
+      </div>
+      <label class="field">Notiz
+        <textarea name="pnotiz" rows="2" placeholder="z. B. Ladekabel, Kulturbeutel …"></textarea>
+      </label>
+      <button type="button" id="packReset" class="chipbtn">Alle Haken entfernen</button>
+      <button type="button" id="packDelete" class="danger" hidden>Packliste löschen</button>
+      <p class="hint">Änderungen werden sofort gespeichert.</p>
+    </div>
+  </form>
 </dialog>
 
 <!-- Settings -->
