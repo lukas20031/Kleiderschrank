@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.12.1';
+const APP_VERSION = '2.0.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -183,11 +183,12 @@ const DB = {
   db: null,
   open() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open('kleiderschrank', 1);
+      const r = indexedDB.open('kleiderschrank', 2);
       r.onupgradeneeded = () => {
         const d = r.result;
-        d.createObjectStore('items', { keyPath: 'id' });
-        d.createObjectStore('photos', { keyPath: 'id' });
+        for (const name of ['items', 'photos', 'outfits']) {
+          if (!d.objectStoreNames.contains(name)) d.createObjectStore(name, { keyPath: 'id' });
+        }
       };
       r.onsuccess = () => { this.db = r.result; res(); };
       r.onerror = () => rej(r.error);
@@ -476,13 +477,15 @@ const DropboxStore = {
 const Store = () => (provKey() === 'dropbox' ? DropboxStore : OneDriveStore);
 
 /* ---------------- Zustand ---------------- */
-let items = [];            // sichtbare (nicht gelöschte) Teile
+let items = [];
+let outfits = [];          // { id, name, itemIds: [], notiz, createdAt, updatedAt }            // sichtbare (nicht gelöschte) Teile
 let photoMap = new Map();  // photoId -> Datensatz {id, itemId, thumb, full, pendingUpload, pendingDelete}
 const urlCache = new Map();
 const filters = JSON.parse(localStorage.getItem('ks_filters') || '{}');
 
 async function loadState() {
   items = (await DB.all('items')).filter((i) => !i._deleted);
+  outfits = (await DB.all('outfits')).filter((o) => !o._deleted);
   if (await migrateItems(items) && Auth.signedIn()) scheduleSync();
   photoMap = new Map((await DB.all('photos')).map((p) => [p.id, p]));
 }
@@ -1365,7 +1368,7 @@ function countPending() {
 }
 let pendingItems = 0;
 async function recountPending() {
-  pendingItems = (await DB.all('items')).filter((i) => i._dirty || i._deleted).length;
+  pendingItems = [...await DB.all('items'), ...await DB.all('outfits')].filter((i) => i._dirty || i._deleted).length;
 }
 
 function scheduleSync(ms = 1500) {
@@ -1426,29 +1429,32 @@ async function pushChanges() {
       if (cur && !cur.pendingDelete) { cur.pendingUpload = false; await DB.put('photos', cur); }
     }
   }
-  // 2. Teile
-  for (const it of await DB.all('items')) {
+  // 2. Teile und Outfits (je ein JSON pro Eintrag in items/ bzw. outfits/)
+  await pushCollection(S, 'items');
+  await pushCollection(S, 'outfits');
+}
+async function pushCollection(S, store) {
+  for (const it of await DB.all(store)) {
     if (it._deleted) {
-      await S.del(`items/${it.id}.json`);
-      const cur = await DB.get('items', it.id);
-      if (cur?._deleted) await DB.del('items', it.id);
+      await S.del(`${store}/${it.id}.json`);
+      const cur = await DB.get(store, it.id);
+      if (cur?._deleted) await DB.del(store, it.id);
     } else if (it._dirty) {
       const blob = new Blob([JSON.stringify(itemForUpload(it), null, 2)], { type: 'application/json' });
-      const etag = await S.put(`items/${it.id}.json`, blob, 'application/json');
-      const cur = await DB.get('items', it.id);
+      const etag = await S.put(`${store}/${it.id}.json`, blob, 'application/json');
+      const cur = await DB.get(store, it.id);
       if (cur && !cur._deleted) {
         cur._etag = etag;
         if (cur.updatedAt === it.updatedAt) cur._dirty = false; // inzwischen erneut geändert? dann später nochmal
-        await DB.put('items', cur);
+        await DB.put(store, cur);
       }
     }
   }
 }
 
-async function pullChanges() {
-  const S = Store();
-  const remote = await S.list('items');
-  const local = new Map((await DB.all('items')).map((i) => [i.id, i]));
+async function pullCollection(S, store) {
+  const remote = await S.list(store);
+  const local = new Map((await DB.all(store)).map((i) => [i.id, i]));
   const remoteIds = new Set();
 
   for (const f of remote) {
@@ -1458,19 +1464,25 @@ async function pullChanges() {
     const l = local.get(id);
     if (l && (l._dirty || l._deleted)) continue;
     if (l && l._etag === f.etag) continue;
-    const blob = await S.download(`items/${f.name}`, f.meta);
+    const blob = await S.download(`${store}/${f.name}`, f.meta);
     if (!blob) continue;
     let data;
     try { data = JSON.parse(await blob.text()); } catch { console.warn('Defektes JSON', f.name); continue; }
-    const cur = await DB.get('items', id);
+    const cur = await DB.get(store, id);
     if (cur && (cur._dirty || cur._deleted)) continue;
-    await DB.put('items', { ...data, id, _etag: f.etag, _dirty: false });
+    await DB.put(store, { ...data, id, _etag: f.etag, _dirty: false });
   }
 
   // Auf anderem Gerät gelöscht
   for (const l of local.values()) {
-    if (!remoteIds.has(l.id) && l._etag && !l._dirty && !l._deleted) await DB.del('items', l.id);
+    if (!remoteIds.has(l.id) && l._etag && !l._dirty && !l._deleted) await DB.del(store, l.id);
   }
+}
+
+async function pullChanges() {
+  const S = Store();
+  await pullCollection(S, 'items');
+  await pullCollection(S, 'outfits');
 
   // Fehlende Vorschaubilder laden, verwaiste lokale Fotos entfernen
   const all = (await DB.all('items')).filter((i) => !i._deleted);
@@ -1495,13 +1507,13 @@ function valuesFor(key, pool = items) {
   return set;
 }
 
-function renderFilters() {
-  const box = $('#filters');
+/** Auswahlfelder der Filter als HTML (für die Übersicht und die Teile-Auswahl im Outfit) */
+function filterSelectsHtml(fState) {
   const defs = [...CAT_KEYS, ...FIELDS.filter((f) => !f.noFilter), { key: 'anlass', label: 'Anlass' }];
   // Unterkategorie/Art nur aus der gewählten Kategorie anbieten
-  const poolK = filters.kategorie ? items.filter((i) => i.kategorie === filters.kategorie) : items;
-  const poolU = filters.unterkategorie ? poolK.filter((i) => i.unterkategorie === filters.unterkategorie) : poolK;
-  box.innerHTML = defs.map((f) => {
+  const poolK = fState.kategorie ? items.filter((i) => i.kategorie === fState.kategorie) : items;
+  const poolU = fState.unterkategorie ? poolK.filter((i) => i.unterkategorie === fState.unterkategorie) : poolK;
+  return defs.map((f) => {
     const pool = f.key === 'unterkategorie' ? poolK : f.key === 'typ' ? poolU : items;
     const vals = [...valuesFor(f.key, pool).entries()];
     if (CAT_KEYS.some((c) => c.key === f.key)) {
@@ -1515,23 +1527,34 @@ function renderFilters() {
     } else {
       vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
     }
-    const cur = filters[f.key] || '';
+    const cur = fState[f.key] || '';
     if (cur && cur !== CAT_NONE && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
     const none = f.key === 'kategorie' ? items.filter((i) => !i.kategorie).length : 0;
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')
     }${none ? `<option value="${CAT_NONE}"${cur === CAT_NONE ? ' selected' : ''}>Nicht zugeordnet (${none})</option>` : ''}</select></label>`;
-  }).join('') + '<button type="button" class="chipbtn reset" id="resetFilters">Zurücksetzen</button>';
+  }).join('') + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
+}
+/** Filterwert ändern; übergeordnete Kategorie setzt Unterkategorie/Art zurück */
+function setFilter(fState, k, v) {
+  fState[k] = v;
+  if (k === 'kategorie') { delete fState.unterkategorie; delete fState.typ; }
+  if (k === 'unterkategorie') delete fState.typ;
+}
+
+function renderFilters() {
+  $('#filters').innerHTML = filterSelectsHtml(filters);
   const n = Object.values(filters).filter(Boolean).length;
   $('#filterCount').textContent = n ? `(${n})` : '';
   $('#filterToggle').classList.toggle('active', n > 0);
 }
 
-function filteredItems() {
-  const q = $('#search').value.trim().toLowerCase();
+/** Teile nach Suchtext, Filtern und Sortierung */
+function filterItems(query, fState, sort = 'new') {
+  const q = String(query || '').trim().toLowerCase();
   const terms = q ? q.split(/\s+/) : [];
   let list = items.filter((it) => {
-    for (const [k, v] of Object.entries(filters)) {
+    for (const [k, v] of Object.entries(fState)) {
       if (!v) continue;
       if (v === CAT_NONE) { if (it[k]) return false; }
       else if (!fieldValues(it, k).includes(v)) return false;
@@ -1540,36 +1563,168 @@ function filteredItems() {
     const hay = [it.name, it.notiz, it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...FIELDS.map((f) => fieldText(it, f.key))].join(' ').toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
-  const sort = $('#sort').value;
   const cmp = (a, b, k) => (k === 'name' ? 0 : String(a[k] || '').localeCompare(String(b[k] || ''), 'de')) || itemTitle(a).localeCompare(itemTitle(b), 'de');
   if (sort === 'new') list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   else if (sort === 'kategorie') list.sort((a, b) => catRank(a) - catRank(b) || cmp(a, b, 'name'));
   else list.sort((a, b) => cmp(a, b, sort));
   return list;
 }
+function filteredItems() { return filterItems($('#search').value, filters, $('#sort').value); }
 
+/** Karte eines Teils (Übersicht, Teile-Auswahl, Outfit-Detail) */
+function itemCardHtml(it, { selected = null } = {}) {
+  const pid = (it.photos || [])[0];
+  const url = pid ? thumbUrl(pid) : '';
+  // Ohne Bezeichnung steht die Kategorie schon im Titel – dann Marke statt Kategorie zeigen
+  const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse].filter(Boolean).join(' · ');
+  const farben = fieldValues(it, 'farben');
+  const n = (it.photos || []).length;
+  return `<button type="button" class="card${selected ? ' selected' : ''}" data-id="${esc(it.id)}">
+      ${url ? `<img class="thumb${isPng(pid) ? ' cut' : ''}" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
+      ${n > 1 && selected === null ? `<span class="nphotos">${n} Fotos</span>` : ''}
+      ${selected !== null ? `<span class="check">${selected ? '✓' : ''}</span>` : ''}
+      ${it._dirty && Auth.configured && selected === null ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
+      <div class="info"><div class="title${it.name ? '' : ' auto'}">${esc(itemTitle(it))}</div>
+        <div class="sub">${farben.length ? `<span class="dots" title="${esc(farben.join(', '))}">${farben.slice(0, 5).map(swatch).join('')}</span>` : ''}${esc(sub || it.lagerort || '')}</div></div>
+    </button>`;
+}
+
+let tab = localStorage.getItem('ks_tab') === 'outfits' ? 'outfits' : 'items';
 function render() {
+  document.body.dataset.tab = tab;
+  for (const b of document.querySelectorAll('#tabbar [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
+  if (tab === 'outfits') return renderOutfits();
   renderFilters();
   const list = filteredItems();
   $('#count').textContent = items.length
     ? (list.length === items.length ? `${items.length} ${items.length === 1 ? 'Teil' : 'Teile'}` : `${list.length} von ${items.length} Teilen`)
     : '';
   $('#empty').hidden = items.length > 0;
-  $('#grid').innerHTML = list.map((it) => {
+  $('#emptyOutfits').hidden = true;
+  $('#grid').className = 'grid';
+  $('#grid').innerHTML = list.map((it) => itemCardHtml(it)).join('');
+}
+
+/* ---------------- Outfits ---------------- */
+const outfitItems = (o) => (o.itemIds || []).map((id) => items.find((i) => i.id === id)).filter(Boolean);
+const outfitTitle = (o) => o.name || outfitItems(o).map(itemTitle).slice(0, 3).join(' + ') || 'Outfit';
+const outfitsWith = (itemId) => outfits.filter((o) => (o.itemIds || []).includes(itemId));
+/** Collage aus bis zu 4 Teilen */
+function collageHtml(o) {
+  const its = outfitItems(o).slice(0, 4);
+  if (!its.length) return '<div class="noimg">Noch keine Teile</div>';
+  return `<div class="collage n${its.length}">${its.map((it) => {
     const pid = (it.photos || [])[0];
     const url = pid ? thumbUrl(pid) : '';
-    // Ohne Bezeichnung steht die Kategorie schon im Titel – dann Marke statt Kategorie zeigen
-    const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse].filter(Boolean).join(' · ');
-    const farben = fieldValues(it, 'farben');
-    const n = (it.photos || []).length;
-    return `<button type="button" class="card" data-id="${esc(it.id)}">
-      ${url ? `<img class="thumb${isPng(pid) ? ' cut' : ''}" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
-      ${n > 1 ? `<span class="nphotos">${n} Fotos</span>` : ''}
-      ${it._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
-      <div class="info"><div class="title${it.name ? '' : ' auto'}">${esc(itemTitle(it))}</div>
-        <div class="sub">${farben.length ? `<span class="dots" title="${esc(farben.join(', '))}">${farben.slice(0, 5).map(swatch).join('')}</span>` : ''}${esc(sub || it.lagerort || '')}</div></div>
+    return url ? `<img class="${isPng(pid) ? 'cut' : ''}" loading="lazy" src="${url}" alt="">` : '<span class="ph">–</span>';
+  }).join('')}</div>`;
+}
+function renderOutfits() {
+  const q = $('#search').value.trim().toLowerCase();
+  const list = outfits
+    .filter((o) => !q || [outfitTitle(o), o.notiz, ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  $('#count').textContent = outfits.length
+    ? (list.length === outfits.length ? `${outfits.length} ${outfits.length === 1 ? 'Outfit' : 'Outfits'}` : `${list.length} von ${outfits.length} Outfits`)
+    : '';
+  $('#empty').hidden = true;
+  $('#emptyOutfits').hidden = outfits.length > 0;
+  $('#grid').className = 'grid outfits';
+  $('#grid').innerHTML = list.map((o) => {
+    const n = outfitItems(o).length;
+    return `<button type="button" class="card outfit" data-outfit="${esc(o.id)}">
+      ${collageHtml(o)}
+      ${o._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
+      <div class="info"><div class="title${o.name ? '' : ' auto'}">${esc(outfitTitle(o))}</div><div class="sub">${n} ${n === 1 ? 'Teil' : 'Teile'}</div></div>
     </button>`;
   }).join('');
+}
+
+/* Outfit-Detailansicht */
+let outfitDetailId = null;
+function openOutfitDetail(id) {
+  const o = outfits.find((x) => x.id === id);
+  if (!o) return;
+  outfitDetailId = id;
+  $('#outfitDetailTitle').textContent = outfitTitle(o);
+  const its = outfitItems(o);
+  $('#outfitDetailItems').innerHTML = its.map((it) => itemCardHtml(it)).join('') || '<p class="muted">Noch keine Teile.</p>';
+  $('#outfitDetailNote').textContent = o.notiz || '';
+  $('#outfitDetailNote').hidden = !o.notiz;
+  if ($('#outfitDetail').open) $('#outfitDetail').close();
+  $('#outfitDetail').showModal();
+}
+
+/* Outfit-Editor */
+let oed = null; // { id, isNew, itemIds: [] }
+function openOutfitEditor(id = null) {
+  const o = id ? outfits.find((x) => x.id === id) : null;
+  oed = { id: o?.id || uid(), isNew: !o, itemIds: [...(o?.itemIds || [])].filter((x) => items.some((i) => i.id === x)) };
+  $('#outfitEditTitle').textContent = o ? 'Outfit bearbeiten' : 'Neues Outfit';
+  $('#outfitForm').elements.oname.value = o?.name || '';
+  $('#outfitForm').elements.onotiz.value = o?.notiz || '';
+  $('#outfitDelete').hidden = !o;
+  renderOutfitItems();
+  $('#outfitEditor').showModal();
+}
+function renderOutfitItems() {
+  const its = oed.itemIds.map((id) => items.find((i) => i.id === id)).filter(Boolean);
+  $('#outfitItems').innerHTML = its.map((it) => {
+    const pid = (it.photos || [])[0];
+    const url = pid ? thumbUrl(pid) : '';
+    return `<div class="oitem">${url ? `<img class="${isPng(pid) ? 'cut' : ''}" src="${url}" alt="">` : '<span class="noimg">–</span>'}
+      <span class="oname">${esc(itemTitle(it))}</span>
+      <button type="button" class="oremove" data-remove="${esc(it.id)}" aria-label="Entfernen">✕</button></div>`;
+  }).join('') || '<p class="hint">Noch keine Teile. Füge über „+ Teile hinzufügen“ Kleidungsstücke hinzu.</p>';
+  $('#outfitCount').textContent = its.length ? `${its.length} ${its.length === 1 ? 'Teil' : 'Teile'}` : '';
+}
+async function saveOutfit() {
+  const f = $('#outfitForm').elements;
+  const now = new Date().toISOString();
+  const prev = outfits.find((x) => x.id === oed.id);
+  const o = {
+    ...(prev || {}),
+    id: oed.id,
+    name: f.oname.value.trim(),
+    notiz: f.onotiz.value.trim(),
+    itemIds: oed.itemIds,
+    createdAt: prev?.createdAt || now,
+    updatedAt: now,
+    _dirty: true,
+  };
+  await DB.put('outfits', o);
+  const id = oed.id;
+  oed = null;
+  await loadState(); await recountPending(); render(); updateSyncIndicator(); scheduleSync();
+  return id;
+}
+async function deleteOutfit(id) {
+  const o = await DB.get('outfits', id);
+  if (!o) return;
+  if (!o._etag) await DB.del('outfits', id);
+  else await DB.put('outfits', { ...o, _deleted: true, _dirty: true });
+  await loadState(); await recountPending(); render(); updateSyncIndicator(); scheduleSync();
+}
+
+/* Teile-Auswahl für ein Outfit: gleiche Suche und Filter wie in der Übersicht */
+const pick = { filters: {}, selected: new Set() };
+function openItemPicker() {
+  pick.filters = {};
+  pick.selected = new Set(oed.itemIds);
+  $('#pickSearch').value = '';
+  $('#pickFilters').hidden = true;
+  renderPicker();
+  $('#pickDlg').showModal();
+}
+function renderPicker() {
+  $('#pickFilters').innerHTML = filterSelectsHtml(pick.filters);
+  const n = Object.values(pick.filters).filter(Boolean).length;
+  $('#pickFilterCount').textContent = n ? `(${n})` : '';
+  $('#pickFilterToggle').classList.toggle('active', n > 0);
+  const list = filterItems($('#pickSearch').value, pick.filters, 'kategorie');
+  $('#pickGrid').innerHTML = list.map((it) => itemCardHtml(it, { selected: pick.selected.has(it.id) })).join('')
+    || '<p class="muted">Keine passenden Teile.</p>';
+  $('#pickDone').textContent = `Fertig (${pick.selected.size})`;
 }
 
 /* ---------------- Detailansicht ---------------- */
@@ -1593,6 +1748,12 @@ async function openDetail(id) {
   const gal = $('#detailPhotos');
   const pids = it.photos || [];
   gal.innerHTML = pids.map((pid) => `<img data-pid="${esc(pid)}" src="${thumbUrl(pid)}" alt=""${isPng(pid) ? ' class="cut"' : ''}>`).join('');
+  // In welchen Outfits kommt das Teil vor?
+  const ofs = outfitsWith(id);
+  $('#detailOutfitsBox').hidden = !ofs.length;
+  $('#detailOutfits').innerHTML = ofs.map((o) => `<button type="button" class="ochiplink" data-outfit="${esc(o.id)}">${collageHtml(o)}<span>${esc(outfitTitle(o))}</span></button>`).join('');
+  // Bereits offen (z. B. unter einem Outfit)? Dann nach oben holen
+  if ($('#detail').open) $('#detail').close();
   $('#detail').showModal();
   for (const img of gal.querySelectorAll('img')) {
     fullUrl(img.dataset.pid).then((u) => { if (u) img.src = u; });
@@ -1859,6 +2020,10 @@ async function deleteItem(id) {
   for (const pid of it.photos || []) await removePhotoRecord(pid);
   if (!it._etag) await DB.del('items', id);           // nie hochgeladen
   else await DB.put('items', { ...it, _deleted: true, _dirty: true });
+  // Aus allen Outfits entfernen
+  for (const o of outfitsWith(id)) {
+    await DB.put('outfits', { ...o, itemIds: o.itemIds.filter((x) => x !== id), updatedAt: new Date().toISOString(), _dirty: true });
+  }
   await loadState();
   await recountPending();
   render();
@@ -1918,9 +2083,11 @@ async function switchProvider(key) {
   sessionStorage.removeItem('ks_silentTried');
   if (key) localStorage.setItem('ks_provider', key); else localStorage.removeItem('ks_provider');
   localStorage.removeItem('ks_lastSync');
-  for (const it of await DB.all('items')) {
-    if (it._deleted) { await DB.del('items', it.id); continue; }
-    await DB.put('items', { ...it, _etag: null, _dirty: true });
+  for (const store of ['items', 'outfits']) {
+    for (const it of await DB.all(store)) {
+      if (it._deleted) { await DB.del(store, it.id); continue; }
+      await DB.put(store, { ...it, _etag: null, _dirty: true });
+    }
   }
   for (const p of await DB.all('photos')) {
     if (p.pendingDelete || (!p.full && !p.thumb)) { await DB.del('photos', p.id); continue; }
@@ -1987,23 +2154,95 @@ function wireEvents() {
 
   $('#grid').addEventListener('click', (e) => {
     const card = e.target.closest('.card');
-    if (card) openDetail(card.dataset.id);
+    if (!card) return;
+    if (card.dataset.outfit) openOutfitDetail(card.dataset.outfit); else openDetail(card.dataset.id);
   });
-  $('#addBtn').addEventListener('click', () => openEditor());
+  $('#addBtn').addEventListener('click', () => (tab === 'outfits' ? openOutfitEditor() : openEditor()));
+  $('#tabbar').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tab]');
+    if (!b || b.dataset.tab === tab) return;
+    tab = b.dataset.tab;
+    localStorage.setItem('ks_tab', tab);
+    $('#search').value = '';
+    $('#filters').hidden = true;
+    render();
+    window.scrollTo(0, 0);
+  });
+
+  // Outfits: Detail, Editor, Teile-Auswahl
+  $('#detailOutfits').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-outfit]');
+    if (b) openOutfitDetail(b.dataset.outfit);
+  });
+  $('#outfitDetailItems').addEventListener('click', (e) => {
+    const c = e.target.closest('.card');
+    if (c) openDetail(c.dataset.id);
+  });
+  $('#outfitDetailEdit').addEventListener('click', () => { $('#outfitDetail').close(); openOutfitEditor(outfitDetailId); });
+  $('#outfitAddItems').addEventListener('click', openItemPicker);
+  $('#outfitItems').addEventListener('click', (e) => {
+    const r = e.target.closest('[data-remove]');
+    if (!r) return;
+    oed.itemIds = oed.itemIds.filter((x) => x !== r.dataset.remove);
+    renderOutfitItems();
+  });
+  $('#outfitForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = await saveOutfit();
+    $('#outfitEditor').close();
+    toast('Outfit gespeichert');
+    if ($('#detail').open && detailId) openDetail(detailId); // „In Outfits“ aktualisieren
+    if ($('#outfitDetail').open && outfitDetailId === id) openOutfitDetail(id);
+  });
+  $('#outfitEditor').addEventListener('close', () => { oed = null; });
+  $('#outfitDelete').addEventListener('click', async () => {
+    if (!confirm('Dieses Outfit löschen? Die Teile selbst bleiben erhalten.')) return;
+    const id = oed.id;
+    oed = null;
+    $('#outfitEditor').close();
+    if ($('#outfitDetail').open) $('#outfitDetail').close();
+    await deleteOutfit(id);
+    if ($('#detail').open && detailId) openDetail(detailId);
+    toast('Outfit gelöscht');
+  });
+  $('#pickSearch').addEventListener('input', renderPicker);
+  $('#pickFilterToggle').addEventListener('click', () => { $('#pickFilters').hidden = !$('#pickFilters').hidden; });
+  $('#pickFilters').addEventListener('change', (e) => {
+    const k = e.target.dataset.filter;
+    if (!k) return;
+    setFilter(pick.filters, k, e.target.value);
+    renderPicker();
+  });
+  $('#pickFilters').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-reset-filters]')) return;
+    pick.filters = {};
+    renderPicker();
+  });
+  $('#pickGrid').addEventListener('click', (e) => {
+    const c = e.target.closest('.card');
+    if (!c) return;
+    const id = c.dataset.id;
+    pick.selected.has(id) ? pick.selected.delete(id) : pick.selected.add(id);
+    renderPicker();
+  });
+  $('#pickDone').addEventListener('click', () => {
+    // Bisherige Reihenfolge behalten, neu Ausgewählte hinten anhängen
+    oed.itemIds = [...oed.itemIds.filter((x) => pick.selected.has(x)), ...[...pick.selected].filter((x) => !oed.itemIds.includes(x))];
+    $('#pickDlg').close();
+    renderOutfitItems();
+  });
   $('#search').addEventListener('input', render);
   $('#sort').addEventListener('change', () => { localStorage.setItem('ks_sort', $('#sort').value); render(); });
   $('#filterToggle').addEventListener('click', () => { $('#filters').hidden = !$('#filters').hidden; });
   $('#filters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
     if (!k) return;
-    filters[k] = e.target.value;
-    if (k === 'kategorie') { delete filters.unterkategorie; delete filters.typ; }
-    if (k === 'unterkategorie') delete filters.typ;
+    setFilter(filters, k, e.target.value);
     localStorage.setItem('ks_filters', JSON.stringify(filters));
     render();
   });
   $('#filters').addEventListener('click', (e) => {
-    if (e.target.id !== 'resetFilters') return;
+    if (!e.target.closest('[data-reset-filters]')) return;
     for (const k of Object.keys(filters)) delete filters[k];
     localStorage.setItem('ks_filters', '{}');
     render();

@@ -52,13 +52,28 @@
 <main>
   <p id="count" class="count"></p>
   <div id="grid" class="grid"></div>
+  <div id="emptyOutfits" class="empty" hidden>
+    <p>Noch keine Outfits.</p>
+    <p class="muted">Tippe auf <b>+</b>, um aus deinen Teilen ein Outfit zusammenzustellen.</p>
+  </div>
   <div id="empty" class="empty" hidden>
     <p>Noch nichts erfasst.</p>
     <p class="muted">Tippe auf <b>+</b>, um dein erstes Kleidungsstück mit Fotos anzulegen.</p>
   </div>
 </main>
 
-<button id="addBtn" class="fab" type="button" aria-label="Neues Teil">+</button>
+<button id="addBtn" class="fab" type="button" aria-label="Neu">+</button>
+
+<nav id="tabbar" class="tabbar">
+  <button type="button" data-tab="items" class="active">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><path d="M8 3 4 5.5 2.5 10l3 1.2V21h13V11.2l3-1.2L20 5.5 16 3c-.6 1.6-2.2 2.6-4 2.6S8.6 4.6 8 3z"/></svg>
+    <span>Teile</span>
+  </button>
+  <button type="button" data-tab="outfits">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+    <span>Outfits</span>
+  </button>
+</nav>
 
 <!-- Editor -->
 <dialog id="editor" class="sheet">
@@ -209,7 +224,63 @@
     <div id="detailPhotos" class="gallery"></div>
     <dl id="detailFields" class="props"></dl>
     <a id="detailLink" class="linkbtn" target="_blank" rel="noopener noreferrer" hidden>Produkt öffnen <span id="detailLinkHost"></span> ↗</a>
+    <div id="detailOutfitsBox" hidden>
+      <h3>In Outfits</h3>
+      <div id="detailOutfits" class="olinks"></div>
+    </div>
   </div>
+</dialog>
+
+<!-- Outfit: Detail -->
+<dialog id="outfitDetail" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Zurück</button>
+    <h2 id="outfitDetailTitle"></h2>
+    <button type="button" id="outfitDetailEdit" class="textbtn strong">Bearbeiten</button>
+  </header>
+  <div class="sheetbody">
+    <p id="outfitDetailNote" class="onote" hidden></p>
+    <div id="outfitDetailItems" class="grid"></div>
+  </div>
+</dialog>
+
+<!-- Outfit: Editor -->
+<dialog id="outfitEditor" class="sheet">
+  <form id="outfitForm" method="dialog">
+    <header class="sheethead">
+      <button type="button" class="textbtn" data-close>Abbrechen</button>
+      <h2 id="outfitEditTitle">Neues Outfit</h2>
+      <button type="submit" class="textbtn strong">Speichern</button>
+    </header>
+    <div class="sheetbody">
+      <label class="field">Name (optional)
+        <input name="oname" placeholder="z. B. Büro Freitag" autocomplete="off">
+      </label>
+      <div class="field">Teile <span id="outfitCount"></span>
+        <div id="outfitItems" class="oitems"></div>
+        <button type="button" id="outfitAddItems" class="addphoto">+ Teile hinzufügen</button>
+      </div>
+      <label class="field">Notiz
+        <textarea name="onotiz" rows="2" placeholder="optional"></textarea>
+      </label>
+      <button type="button" id="outfitDelete" class="danger" hidden>Outfit löschen</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Outfit: Teile auswählen -->
+<dialog id="pickDlg" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Abbrechen</button>
+    <h2>Teile auswählen</h2>
+    <button type="button" id="pickDone" class="textbtn strong">Fertig</button>
+  </header>
+  <div class="picktools">
+    <input id="pickSearch" type="search" placeholder="Suchen …" autocomplete="off">
+    <button id="pickFilterToggle" class="chipbtn" type="button">Filter <span id="pickFilterCount"></span></button>
+  </div>
+  <section id="pickFilters" class="filters" hidden></section>
+  <div class="sheetbody"><div id="pickGrid" class="grid"></div></div>
 </dialog>
 
 <!-- Settings -->
