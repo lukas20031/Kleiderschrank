@@ -104,6 +104,17 @@
   <div class="sheetbody katlist" id="katList"></div>
 </dialog>
 
+<!-- Auswahl Farbe / Material / Größe -->
+<dialog id="optDlg" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" id="optClear">Zurücksetzen</button>
+    <h2 id="optTitle"></h2>
+    <button type="button" class="textbtn strong" id="optDone" data-close>Fertig</button>
+  </header>
+  <div class="katsearch"><input id="optSearch" type="search" placeholder="Suchen …" autocomplete="off"></div>
+  <div class="sheetbody katlist" id="optList"></div>
+</dialog>
+
 <!-- Photo actions -->
 <dialog id="photoDlg" class="photodlg">
   <img id="photoBig" alt="">
@@ -170,6 +181,7 @@
 <div id="toast" class="toast" hidden></div>
 
 <script src="kategorien.js"></script>
+<script src="optionen.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

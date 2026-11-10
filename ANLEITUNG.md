@@ -2,7 +2,7 @@
 
 Web-App (PWA) für die digitale Garderobe. Alles wird zuerst auf dem Gerät gespeichert und dann mit einem eigenen App-Ordner in deinem **Dropbox** oder **OneDrive** synchronisiert. Ohne Cloud-Verbindung läuft die App rein lokal.
 
-**Dateien:** `index.html`, `kategorien.js`, `app.js`, `style.css`, `sw.js`, `manifest.webmanifest`, `icons/`
+**Dateien:** `index.html`, `kategorien.js`, `optionen.js`, `app.js`, `style.css`, `sw.js`, `manifest.webmanifest`, `icons/`
 
 ---
 
@@ -63,6 +63,7 @@ Fotos lassen sich direkt mit der Kamera aufnehmen oder aus der Galerie wählen, 
 - **Speicherformat (Dropbox und OneDrive gleich):** `Apps/<App-Name>/items/<id>.json` enthält ein Teil mit allen Feldern. Die Fotos liegen in `Apps/<App-Name>/fotos/<fotoId>.jpg`, dazu jeweils `_t.jpg` als Vorschau. Die Daten bleiben also lesbar, auch ohne die App.
 - **Offline:** Du kannst alles ohne Netz erfassen. Ein orangefarbener Punkt auf der Karte bedeutet „noch nicht hochgeladen“. Die Synchronisierung läuft automatisch, sobald du wieder online bist, außerdem beim Öffnen der App und alle 5 Minuten.
 - **Mehrere Geräte:** Wenn dasselbe Teil auf zwei Geräten gleichzeitig geändert wird, gilt die zuletzt hochgeladene Version.
+- **Feste Auswahllisten:** Farben, Materialien, Größen und Zustände stehen in `optionen.js`. Die Reihenfolge dort ist auch die Reihenfolge in der App, beim Zustand also von bester zu schlechtester Qualität. Farbe und Material erlauben Mehrfachauswahl. Werte aus früheren Versionen, die zu keinem Listeneintrag passen, zeigt die App im Editor orange als „Bisher …“ an, bis du neu ausgewählt hast.
 - **Kategorien:** Die feste Liste (Kategorie › Unterkategorie › Art, übernommen aus Whering) steht in `kategorien.js` und lässt sich dort ändern. Gespeichert werden die Felder `kategorie`, `unterkategorie` und `typ`. Einträge mit einer frei getippten Kategorie aus früheren Versionen ordnet die App automatisch zu. Was sie nicht zuordnen kann, erscheint im Filter unter „Nicht zugeordnet“.
 - **Export:** *Einstellungen › Als CSV exportieren* erzeugt eine Tabelle für Excel. Wenn ein Filter aktiv ist, enthält sie nur die gefilterten Teile.
 - **Updates der App:** Nach einer Änderung an den Dateien in `sw.js` die `VERSION` erhöhen. Sonst zeigen installierte Geräte noch die alte Version aus dem Cache.

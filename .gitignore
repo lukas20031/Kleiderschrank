@@ -1,0 +1,7 @@
+# Screenshots aus Whering (nur Vorlage für die festen Listen)
+Screenshots/
+
+# System-Dateien
+.DS_Store
+Thumbs.db
+desktop.ini
