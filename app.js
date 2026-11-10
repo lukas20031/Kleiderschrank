@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.12.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -527,12 +527,18 @@ function dropUrls(pid) {
 /* ---------------- Foto-Dateien ----------------
  * Fotos mit transparentem Hintergrund haben eine ID mit Endung ".png" und werden als PNG gespeichert,
  * alle anderen als JPG:  fotos/<id>.jpg + fotos/<id>_t.jpg  bzw.  fotos/<id>.png + fotos/<id>_t.png */
-const isPng = (pid) => pid.endsWith('.png');
-const photoFile = (pid, thumb = false) => {
-  const base = isPng(pid) ? pid.slice(0, -4) : pid;
-  return `fotos/${base}${thumb ? '_t' : ''}.${isPng(pid) ? 'png' : 'jpg'}`;
+// Freigestellte Fotos: ID endet auf ".png" (verlustfrei) oder ".webp" (verkleinert, mit Transparenz)
+const cutExt = (pid) => (pid.endsWith('.png') ? 'png' : pid.endsWith('.webp') ? 'webp' : null);
+const isPng = (pid) => cutExt(pid) !== null; // = freigestellt (transparent)
+// Zu freigestellten Fotos wird zusätzlich das Original ohne Freistellung gespeichert (fotos/<id>_o.jpg),
+// damit es später erneut bearbeitet werden kann.
+const photoFile = (pid, variant = false) => {
+  const ext = cutExt(pid) || 'jpg';
+  const base = cutExt(pid) ? pid.slice(0, -(ext.length + 1)) : pid;
+  if (variant === 'orig') return `fotos/${base}_o.${ext === 'webp' ? 'webp' : 'jpg'}`; // Original im selben Format/Qualität
+  return `fotos/${base}${variant ? '_t' : ''}.${ext}`;
 };
-const photoMime = (pid) => (isPng(pid) ? 'image/png' : 'image/jpeg');
+const photoMime = (pid) => ({ png: 'image/png', webp: 'image/webp' }[cutExt(pid)] || 'image/jpeg');
 
 /* ---------------- Bildverarbeitung ---------------- */
 async function loadBitmap(file) {
@@ -581,9 +587,34 @@ async function fileToCanvas(file) {
   bmp.close?.();
   return c;
 }
-async function canvasToPhoto(canvas, transparent = false) {
-  if (transparent) return { full: await toPng(canvas, 1600), thumb: await toPng(canvas, 480) };
-  return { full: await toJpeg(canvas, 1600, 0.85), thumb: await toJpeg(canvas, 480, 0.78) };
+/* Bildqualität (Einstellungen, 50–100 %):
+ *  - normale Fotos: JPG-Qualität
+ *  - freigestellte Fotos: WebP mit Transparenz in dieser Qualität; bei 100 % verlustfreies PNG.
+ *    Kann der Browser kein WebP erzeugen (Safari), wird stattdessen die Auflösung verkleinert. */
+const photoQuality = () => Math.min(100, Math.max(50, Number(localStorage.getItem('ks_quality')) || 85));
+const webpSupported = (() => { try { const c = document.createElement('canvas'); c.width = c.height = 1; return c.toDataURL('image/webp').startsWith('data:image/webp'); } catch { return false; } })();
+function toWebp(src, max, q) {
+  const c = scaled(src, max);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return toBlob(c, 'image/webp', q);
+}
+/** Gibt die Bilddateien und die Endung für die Foto-ID zurück ('' = JPG, '.png', '.webp') */
+async function canvasToPhoto(canvas, transparent = false, origCanvas = null) {
+  const q = photoQuality() / 100;
+  const jpgQ = 0.45 + q * 0.47;                    // 50 % → 0,69 · 85 % → 0,85 · 100 % → 0,92
+  if (!transparent) return { full: await toJpeg(canvas, 1600, jpgQ), thumb: await toJpeg(canvas, 480, 0.78), ext: '' };
+  // Das mitgespeicherte Original bekommt dieselbe Qualität/Auflösung wie das freigestellte Foto
+  if (q >= 1) {
+    return { full: await toPng(canvas, 1600), thumb: await toPng(canvas, 480), orig: origCanvas ? await toJpeg(origCanvas, 1600, jpgQ) : null, ext: '.png' };
+  }
+  if (webpSupported) {
+    return { full: await toWebp(canvas, 1600, jpgQ), thumb: await toWebp(canvas, 480, 0.75), orig: origCanvas ? await toWebp(origCanvas, 1600, jpgQ) : null, ext: '.webp' };
+  }
+  // Ohne WebP: Auflösung verkleinern (50 % → 900 px, 99 % → 1590 px)
+  const max = Math.round(200 + 1400 * q);
+  return { full: await toPng(canvas, max), thumb: await toPng(canvas, 360), orig: origCanvas ? await toJpeg(origCanvas, max, jpgQ) : null, ext: '.png' };
 }
 
 /* ---------------- Hintergrund entfernen (@imgly/background-removal, läuft im Browser) ----------------
@@ -717,23 +748,26 @@ function prepareColorMask(base) {
   const w = t.width, h = t.height, n = w * h;
   const d = ctx.getImageData(0, 0, w, h).data;
   // In Helligkeit/Farbe zerlegen; Helligkeit zählt weniger, damit Schatten eher als Untergrund gelten
-  const Y = new Float32Array(n), U = new Float32Array(n), V = new Float32Array(n);
+  const Y = new Float32Array(n), U = new Float32Array(n), V = new Float32Array(n), A = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
     Y[i] = (0.299 * r + 0.587 * g + 0.114 * b) * 0.6;
     U[i] = -0.169 * r - 0.331 * g + 0.5 * b;
     V[i] = 0.5 * r - 0.419 * g - 0.081 * b;
+    A[i] = d[i * 4 + 3] >= 128; // bereits freigestellte (transparente) Stellen zählen als Untergrund
   }
   // Randpixel (2 px breit) sammeln und in bis zu 4 Farbgruppen einteilen (k-means)
   const border = [];
   for (let x = 0; x < w; x++) for (const y of [0, 1, h - 2, h - 1]) border.push(y * w + x);
   for (let y = 2; y < h - 2; y++) for (const x of [0, 1, w - 2, w - 1]) border.push(y * w + x);
+  const opaqueBorder = border.filter((i) => A[i]);
   const K = 4;
-  let cs = Array.from({ length: K }, (_, k) => { const i = border[Math.floor((k + 0.5) * border.length / K)]; return [Y[i], U[i], V[i]]; });
+  const kb = opaqueBorder.length ? opaqueBorder : border;
+  let cs = Array.from({ length: K }, (_, k) => { const i = kb[Math.floor((k + 0.5) * kb.length / K)]; return [Y[i], U[i], V[i]]; });
   let counts = new Array(K).fill(0);
   for (let it = 0; it < 8; it++) {
     const sum = cs.map(() => [0, 0, 0]); counts = new Array(K).fill(0);
-    for (const i of border) {
+    for (const i of kb) {
       let best = 0, bd = Infinity;
       cs.forEach((c, k) => { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) { bd = dd; best = k; } });
       sum[best][0] += Y[i]; sum[best][1] += U[i]; sum[best][2] += V[i]; counts[best]++;
@@ -741,9 +775,10 @@ function prepareColorMask(base) {
     cs = cs.map((c, k) => (counts[k] ? sum[k].map((v) => v / counts[k]) : c));
   }
   // Seltene Randfarben (z. B. ein Ärmel, der den Rand berührt) nicht als Untergrund werten
-  const centers = cs.filter((_, k) => counts[k] >= border.length * 0.08);
+  const centers = opaqueBorder.length ? cs.filter((_, k) => counts[k] >= kb.length * 0.08) : [];
   const dist = new Float32Array(n);
   for (let i = 0; i < n; i++) {
+    if (!A[i]) { dist[i] = 0; continue; }
     let bd = Infinity;
     for (const c of centers) { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) bd = dd; }
     dist[i] = Math.sqrt(bd);
@@ -786,9 +821,10 @@ function prepareCenterMask(base, size = 700) {
   ctx.drawImage(base, 0, 0, t.width, t.height);
   const w = t.width, h = t.height, n = w * h;
   const d = ctx.getImageData(0, 0, w, h).data;
-  const Y = new Float32Array(n), U = new Float32Array(n), V = new Float32Array(n);
+  const Y = new Float32Array(n), U = new Float32Array(n), V = new Float32Array(n), A = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+    A[i] = d[i * 4 + 3] >= 128; // bereits transparente Stellen gehören nie zum Motiv
     Y[i] = (0.299 * r + 0.587 * g + 0.114 * b) * 0.6; // Helligkeit schwächer gewichtet (Falten, Schatten)
     U[i] = -0.169 * r - 0.331 * g + 0.5 * b;
     V[i] = 0.5 * r - 0.419 * g - 0.081 * b;
@@ -797,7 +833,8 @@ function prepareCenterMask(base, size = 700) {
   // Der Stoff überwiegt dort fast immer – auch wenn ein großer Aufdruck genau in der Mitte sitzt.
   const x0 = Math.round(w * 0.25), x1 = Math.round(w * 0.75), y0 = Math.round(h * 0.25), y1 = Math.round(h * 0.75);
   const win = [];
-  for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) win.push(y * w + x);
+  for (let y = y0; y < y1; y += 2) for (let x = x0; x < x1; x += 2) if (A[y * w + x]) win.push(y * w + x);
+  if (!win.length) win.push((h >> 1) * w + (w >> 1));
   let cs = [0.1, 0.4, 0.6, 0.9].map((f) => { const i = win[Math.floor(f * (win.length - 1))]; return [Y[i], U[i], V[i]]; });
   let lab = new Uint8Array(win.length);
   for (let it = 0; it < 8; it++) {
@@ -813,7 +850,7 @@ function prepareCenterMask(base, size = 700) {
   const K = cnt.indexOf(Math.max(...cnt)), ref = cs[K];
   const seeds = win.filter((_, j) => lab[j] === K);
   const dref = new Float32Array(n);
-  for (let i = 0; i < n; i++) dref[i] = Math.sqrt((Y[i] - ref[0]) ** 2 + (U[i] - ref[1]) ** 2 + (V[i] - ref[2]) ** 2);
+  for (let i = 0; i < n; i++) dref[i] = A[i] ? Math.sqrt((Y[i] - ref[0]) ** 2 + (U[i] - ref[1]) ** 2 + (V[i] - ref[2]) ** 2) : 1e9;
   return { w, h, Y, U, V, dref, seeds };
 }
 /* Teil 2: wachsen lassen und Löcher füllen. Ergebnis: 1 = Hintergrund (vom Rand erreichbar), 0 = Motiv */
@@ -891,20 +928,28 @@ const Crop = {
   get transparent() { return !!this.mask || this.baseTransparent; },
 
   /** Öffnet den Editor. Ergebnis: { canvas, transparent } | { …, skipRest } | null (verworfen) */
-  edit(canvas, title, moreLeft = false, transparent = false) {
+  /** initMask: vorhandene Freistellung (beim erneuten Bearbeiten eines gespeicherten Fotos mit Original) */
+  edit(canvas, title, moreLeft = false, transparent = false, initMask = null) {
     this.session = (this.session || 0) + 1;
     this.setBusy(null);
     this.orig = canvas;
     this.origTransparent = transparent;
+    this.initMask = initMask;
     $('#cropTitle').textContent = title;
     $('#cropSkipRest').hidden = !moreLeft;
     $('#cropDlg').showModal();
-    this.reset();
+    this.undo = [];
+    this.reset(false);
+    if (initMask) this.setMask(copyCanvas(initMask));
     setTimeout(warmUpBg, 400);
     return new Promise((res) => { this.resolve = res; });
   },
   finish(result) {
-    if (result) result.transparent = this.transparent;
+    if (result) {
+      result.transparent = this.transparent;
+      // Original (ohne Freistellung, gleicher Ausschnitt) mitgeben, damit es später erneut bearbeitet werden kann
+      result.orig = this.mask && !this.baseTransparent ? this.cropOf(this.base) : null;
+    }
     this.session++;
     this.setBusy(null);
     this.undo = []; this.colorPrep = {};
@@ -913,12 +958,14 @@ const Crop = {
     $('#cropDlg').close();
     r?.(result);
   },
-  /** Alles zurück auf das Originalfoto */
-  reset() {
+  /** Alles zurück auf das Originalfoto (ohne Freistellung). Vom Nutzer ausgelöst: per ↶ rückgängig machbar. */
+  reset(byUser = true) {
+    if (byUser && this.mask && this.base === this.orig) this.pushUndo();
+    else if (byUser) this.undo = [];
     this.base = this.orig;
     this.baseTransparent = this.origTransparent;
     this.mask = null; this.comp = null;
-    this.undo = []; this.colorPrep = {};
+    this.colorPrep = {};
     this.ratio = null;
     for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === '');
     this.setTool('crop');
@@ -1005,6 +1052,14 @@ const Crop = {
     this.ratio = r || null;
     for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === (r ? String(r) : ''));
     if (apply) { this.resetRect(); this.drawBox(); }
+  },
+  cropOf(src) {
+    const r = this.rect;
+    const x = Math.round(r.x), y = Math.round(r.y), w = Math.round(r.w), h = Math.round(r.h);
+    if (x === 0 && y === 0 && w === src.width && h === src.height) return src;
+    const c = newCanvas(w, h);
+    c.getContext('2d').drawImage(src, x, y, w, h, 0, 0, w, h);
+    return c;
   },
   result() {
     const src = this.src, r = this.rect;
@@ -1112,7 +1167,6 @@ const Crop = {
   /** Farbbasiertes Freistellen (fast sofort, ohne Download):
    *  'center' = Motiv in der Mitte, 'edge' = einfarbiger Untergrund */
   applyColor(push = true) {
-    if (this.baseTransparent) return toast('Dieses Foto ist bereits freigestellt.');
     if (push) this.pushUndo();
     const mode = this.colorMode, W = this.base.width, H = this.base.height;
     if (mode === 'center') {
@@ -1139,7 +1193,6 @@ const Crop = {
   /** KI-Freistellung (@imgly/background-removal) */
   async removeBg() {
     if (this.busy) return;
-    if (this.baseTransparent) return toast('Dieses Foto ist bereits freigestellt.');
     this.showColorPanel(false);
     const session = this.session;
     this.setBusy('Wird vorbereitet …');
@@ -1147,7 +1200,9 @@ const Crop = {
       const { removeBackground } = await loadBgLib();
       // Eingabe auf höchstens 2000 px verkleinern – schneller; gespeichert werden ohnehin 1600 px
       const input = scaled(this.base, 2000);
-      input.getContext('2d').drawImage(this.base, 0, 0, input.width, input.height);
+      const ictx = input.getContext('2d');
+      ictx.fillStyle = '#fff'; ictx.fillRect(0, 0, input.width, input.height); // bereits transparente Stellen weiß
+      ictx.drawImage(this.base, 0, 0, input.width, input.height);
       const blob = await toBlob(input, 'image/jpeg', 0.95);
       bgProgress = (key, cur, total) => {
         if (session !== this.session) return;
@@ -1224,16 +1279,18 @@ async function addPhotos(files) {
   for (let i = 0; i < files.length; i++) {
     try {
       let canvas = await fileToCanvas(files[i]);
-      let transparent = false;
+      let transparent = false, origCanvas = null;
       if (!skipEditing) {
         const res = await Crop.edit(canvas, files.length > 1 ? `Foto ${i + 1} von ${files.length}` : 'Foto bearbeiten', i < files.length - 1);
         if (!res) continue; // verworfen
         canvas = res.canvas;
         transparent = res.transparent;
+        origCanvas = res.orig;
         if (res.skipRest) skipEditing = true;
       }
-      const { full, thumb } = await canvasToPhoto(canvas, transparent);
-      ed.photos.push({ id: uid() + (transparent ? '.png' : ''), isNew: true, full, thumb, url: URL.createObjectURL(thumb) });
+      const { full, thumb, orig, ext } = await canvasToPhoto(canvas, transparent, origCanvas);
+      if (!ed) return;
+      ed.photos.push({ id: uid() + ext, isNew: true, full, thumb, orig, url: URL.createObjectURL(thumb) });
       // Farbe vorschlagen, solange noch keine gewählt ist (nur beim ersten Foto = Titelbild)
       if (ed.photos.length === 1 && !ed.vals.farben.length) {
         const found = detectColors(canvas, transparent);
@@ -1247,6 +1304,9 @@ async function addPhotos(files) {
   skipEditing = false;
 }
 let skipEditing = false;
+// Laufende Fotoverarbeitung (Umwandeln/Freistellen) – Speichern wartet darauf, damit kein Foto verloren geht
+const photoTasks = new Set();
+function trackPhoto(p) { photoTasks.add(p); p.finally(() => photoTasks.delete(p)); return p; }
 
 /** Vorhandenes Foto im Editor erneut drehen/zuschneiden */
 async function reEditPhoto(idx) {
@@ -1257,12 +1317,28 @@ async function reEditPhoto(idx) {
     if (u) blob = await (await fetch(u)).blob();
   }
   if (!blob) return toast('Das Foto ist gerade nicht verfügbar.');
-  const res = await Crop.edit(await fileToCanvas(blob), 'Foto bearbeiten', false, isPng(p.id));
-  if (!res) return;
-  const { full, thumb } = await canvasToPhoto(res.canvas, res.transparent);
+  let res;
+  const png = isPng(p.id);
+  // Freigestelltes Foto: Original holen (lokal oder aus der Cloud), Freistellung als Maske darüberlegen
+  let origBlob = png ? (p.isNew ? p.orig : photoMap.get(p.id)?.orig) || null : null;
+  if (png && !origBlob && !p.isNew && Auth.signedIn() && navigator.onLine) {
+    try { origBlob = await Store().download(photoFile(p.id, 'orig')); } catch (e) { console.warn(e); }
+  }
+  if (origBlob) {
+    const base = await fileToCanvas(origBlob);
+    const cut = await fileToCanvas(blob);
+    const mask = newCanvas(base.width, base.height);
+    mask.getContext('2d').drawImage(cut, 0, 0, mask.width, mask.height);
+    res = await Crop.edit(base, 'Foto bearbeiten', false, false, mask);
+  } else {
+    // Ältere freigestellte Fotos ohne gespeichertes Original: weiter bearbeiten nur auf dem freigestellten Bild
+    res = await Crop.edit(await fileToCanvas(blob), 'Foto bearbeiten', false, png);
+  }
+  if (!res || !ed) return;
+  const { full, thumb, orig, ext } = await canvasToPhoto(res.canvas, res.transparent, res.orig);
   if (p.isNew) URL.revokeObjectURL(p.url); else ed.removed.push(p.id);
   // Bearbeitetes Foto ersetzt das alte an derselben Stelle
-  ed.photos[idx] = { id: uid() + (res.transparent ? '.png' : ''), isNew: true, full, thumb, url: URL.createObjectURL(thumb) };
+  ed.photos[idx] = { id: uid() + ext, isNew: true, full, thumb, orig, url: URL.createObjectURL(thumb) };
   renderPhotoStrip();
 }
 
@@ -1340,10 +1416,12 @@ async function pushChanges() {
     if (ph.pendingDelete) {
       await S.del(photoFile(ph.id));
       await S.del(photoFile(ph.id, true));
+      if (isPng(ph.id)) await S.del(photoFile(ph.id, 'orig'));
       await DB.del('photos', ph.id);
     } else if (ph.pendingUpload) {
       await S.put(photoFile(ph.id), ph.full, photoMime(ph.id));
       await S.put(photoFile(ph.id, true), ph.thumb, photoMime(ph.id));
+      if (ph.orig) await S.put(photoFile(ph.id, 'orig'), ph.orig, ph.orig.type || 'image/jpeg');
       const cur = await DB.get('photos', ph.id);
       if (cur && !cur.pendingDelete) { cur.pendingUpload = false; await DB.put('photos', cur); }
     }
@@ -1745,7 +1823,7 @@ async function saveEditor() {
   if (it.kategorie) delete it.kategorieAlt;
 
   for (const p of ed.photos.filter((x) => x.isNew)) {
-    const rec = { id: p.id, itemId: it.id, full: p.full, thumb: p.thumb, pendingUpload: true };
+    const rec = { id: p.id, itemId: it.id, full: p.full, thumb: p.thumb, orig: p.orig || null, pendingUpload: true };
     await DB.put('photos', rec);
     photoMap.set(p.id, rec);
     URL.revokeObjectURL(p.url);
@@ -1817,8 +1895,20 @@ function renderSettings() {
     ? `Gespeichert wird in ${P.where}: ein JSON pro Teil im Ordner <code>items</code>, Fotos in <code>fotos</code>.`
     : 'Ohne Cloud-Speicher liegen die Daten nur in diesem Browser. Für eine Sicherung und mehrere Geräte OneDrive oder Dropbox wählen.';
   for (const b of $('#bgModelSeg').children) b.classList.toggle('active', b.dataset.m === bgModel());
+  $('#qualitySlider').value = photoQuality();
+  renderQualityText();
   const cores = self.crossOriginIsolated ? (navigator.hardwareConcurrency || 1) : 1;
   $('#version').textContent = `Version ${APP_VERSION} · Freistellen mit ${cores} ${cores === 1 ? 'Prozessorkern' : 'Prozessorkernen'}`;
+}
+
+function renderQualityText() {
+  const q = photoQuality();
+  $('#qualityValue').textContent = `${q} %`;
+  $('#qualityHint').textContent = q >= 100
+    ? 'Höchste Qualität: freigestellte Fotos verlustfrei als PNG (große Dateien).'
+    : webpSupported
+      ? 'Freigestellte Fotos als WebP mit transparentem Hintergrund – deutlich kleiner als PNG. Gilt auch für die JPG-Qualität normaler Fotos.'
+      : 'Dieser Browser kann kein WebP erzeugen: der Regler verkleinert stattdessen die Auflösung freigestellter Fotos (PNG). Gilt auch für die JPG-Qualität normaler Fotos.';
 }
 
 /** Wechselt den Cloud-Speicher. Alles, was auf diesem Gerät liegt, wird in den neuen Speicher hochgeladen;
@@ -1871,6 +1961,9 @@ function exportCsv() {
 let toastTimer;
 function toast(msg) {
   const t = $('#toast');
+  // In den obersten offenen Dialog hängen, sonst liegt die Meldung hinter dem Dialog
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  if (t.parentElement !== host) host.append(t);
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
@@ -2016,6 +2109,11 @@ function wireEvents() {
   // Editor
   $('#editForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (photoTasks.size) {
+      toast('Fotos werden noch verarbeitet …');
+      await Promise.allSettled([...photoTasks]);
+      if (!ed) return;
+    }
     const id = await saveEditor();
     $('#editor').close();
     toast('Gespeichert');
@@ -2027,7 +2125,7 @@ function wireEvents() {
   $('#cameraInput').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
-    await addPhotos(files);
+    await trackPhoto(addPhotos(files));
   });
   // Foto-Editor
   $('#cropOk').addEventListener('click', () => Crop.finish({ canvas: Crop.result() }));
@@ -2059,7 +2157,7 @@ function wireEvents() {
   $('#photoInput').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
-    await addPhotos(files);
+    await trackPhoto(addPhotos(files));
   });
   $('#anlassChips').addEventListener('click', (e) => {
     const a = e.target.dataset.anlass;
@@ -2099,7 +2197,7 @@ function wireEvents() {
   });
   $('#photoEdit').addEventListener('click', async () => {
     $('#photoDlg').close();
-    await reEditPhoto(photoIdx);
+    await trackPhoto(reEditPhoto(photoIdx));
   });
   $('#photoCover').addEventListener('click', () => {
     const [p] = ed.photos.splice(photoIdx, 1);
@@ -2145,6 +2243,10 @@ function wireEvents() {
   });
   $('#syncNowBtn').addEventListener('click', () => sync());
   $('#csvBtn').addEventListener('click', exportCsv);
+  $('#qualitySlider').addEventListener('input', (e) => {
+    localStorage.setItem('ks_quality', e.target.value);
+    renderQualityText();
+  });
   $('#bgModelSeg').addEventListener('click', (e) => {
     const b = e.target.closest('[data-m]');
     if (!b) return;

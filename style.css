@@ -310,3 +310,7 @@ code { font-size: 12.5px; background: var(--card); border: 1px solid var(--line)
 
 .autohint { margin: 2px 0 0; color: var(--brand); }
 @media (prefers-color-scheme: dark) { .autohint { color: #8fd0c6; } }
+
+.qrow { display: flex; align-items: center; gap: 12px; }
+.qrow input { flex: 1; accent-color: var(--brand); }
+.qrow span { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }

@@ -247,7 +247,12 @@
       <button type="button" data-m="isnet_quint8">Schnell (~40 MB)</button>
       <button type="button" data-m="isnet_fp16">Genau (~84 MB)</button>
     </div>
-    <p class="hint">„Genau“ liefert etwas sauberere Kanten, rechnet aber länger und lädt beim ersten Gebrauch ein eigenes Modell. Bei bedruckten Shirts hilft oft eher „Einfarbiger Untergrund“ im Foto-Editor.</p>
+    <p class="hint">„Genau“ liefert etwas sauberere Kanten, rechnet aber länger und lädt beim ersten Gebrauch ein eigenes Modell. Bei bedruckten Shirts hilft oft eher „◎ Motiv Mitte“ im Foto-Editor.</p>
+
+    <h3>Bildqualität</h3>
+    <div class="qrow"><input type="range" id="qualitySlider" min="50" max="100" step="5" aria-label="Bildqualität"><span id="qualityValue"></span></div>
+    <p class="hint" id="qualityHint"></p>
+    <p class="hint">Gilt für neu gespeicherte Fotos. Bereits gespeicherte bleiben unverändert.</p>
 
     <h3>Daten</h3>
     <p id="stats" class="muted"></p>
