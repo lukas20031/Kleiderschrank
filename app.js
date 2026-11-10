@@ -3,11 +3,10 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 
 const FIELDS = [
-  { key: 'kategorie', label: 'Kategorie', defaults: ['T-Shirt', 'Hemd', 'Bluse', 'Pullover', 'Hoodie', 'Hose', 'Jeans', 'Shorts', 'Kleid', 'Rock', 'Jacke', 'Mantel', 'Anzug', 'Schuhe', 'Sportbekleidung', 'Unterwäsche', 'Socken', 'Accessoire'] },
   { key: 'farbe', label: 'Farbe', defaults: ['Schwarz', 'Weiß', 'Grau', 'Blau', 'Dunkelblau', 'Rot', 'Grün', 'Braun', 'Beige', 'Gelb', 'Rosa', 'Lila', 'Orange', 'Bunt', 'Gemustert'] },
   { key: 'groesse', label: 'Größe', defaults: ['XS', 'S', 'M', 'L', 'XL', 'XXL'] },
   { key: 'material', label: 'Material', defaults: ['Baumwolle', 'Wolle', 'Merinowolle', 'Leinen', 'Seide', 'Polyester', 'Viskose', 'Elasthan-Mix', 'Leder', 'Denim', 'Fleece', 'Daune'] },
@@ -15,6 +14,65 @@ const FIELDS = [
   { key: 'lagerort', label: 'Lagerort', defaults: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'] },
   { key: 'zustand', label: 'Zustand', defaults: ['Neu', 'Sehr gut', 'Gut', 'Getragen', 'Reparaturbedürftig', 'Aussortieren'] },
 ];
+/* Kategorien: feste Liste aus kategorien.js, gespeichert als drei Felder */
+const CAT_KEYS = [
+  { key: 'kategorie', label: 'Kategorie' },
+  { key: 'unterkategorie', label: 'Unterkategorie' },
+  { key: 'typ', label: 'Art' },
+];
+const CAT_NONE = '__none__';
+const CAT = (() => {
+  const order = new Map();   // "K|U|A", "K|U", "K" -> Reihenfolge
+  const l1 = new Set();
+  const leaves = new Map();  // kleingeschriebene Art -> erster Pfad
+  const groups = new Map();  // kleingeschriebene Unterkategorie -> erster Pfad
+  let n = 0;
+  for (const [k, gs] of KATEGORIEN) {
+    l1.add(k);
+    order.set(k, n++);
+    for (const [u, as] of gs) {
+      order.set(`${k}|${u}`, n++);
+      if (!groups.has(u.toLowerCase())) groups.set(u.toLowerCase(), [k, u, '']);
+      for (const a of as) {
+        order.set(`${k}|${u}|${a}`, n++);
+        if (!leaves.has(a.toLowerCase())) leaves.set(a.toLowerCase(), [k, u, a]);
+      }
+    }
+  }
+  return { order, l1, leaves, groups };
+})();
+const catPath = (it) => [it.kategorie, it.unterkategorie, it.typ].filter(Boolean).join(' › ');
+const catRank = (it) => {
+  if (!it.kategorie) return 1e9;
+  return CAT.order.get([it.kategorie, it.unterkategorie, it.typ].filter(Boolean).join('|')) ?? CAT.order.get(it.kategorie) ?? 1e8;
+};
+// Ältere freie Kategorie-Werte (Version 1.0/1.1) auf die feste Liste abbilden
+const CAT_ALIASES = {
+  hemd: ['Oberteile', 'Hemden', ''], anzug: ['Ganzkörper', 'Anzüge', ''], schuhe: ['Schuhe', '', ''],
+  accessoire: ['Accessoires', '', ''], unterwäsche: ['Unterwäsche & Nachtwäsche', 'Unterwäsche', ''],
+  tasche: ['Taschen', 'Freizeittaschen', 'Tasche'], oberteil: ['Oberteile', '', ''], top: ['Oberteile', 'Top', ''],
+};
+function mapOldCategory(old) {
+  const k = old.trim().toLowerCase();
+  if (!k) return null;
+  for (const l of CAT.l1) if (l.toLowerCase() === k) return [l, '', ''];
+  return CAT.leaves.get(k) || CAT.groups.get(k) || CAT_ALIASES[k] || null;
+}
+async function migrateCategories(list) {
+  let changed = 0;
+  for (const it of list) {
+    if (!it.kategorie || CAT.l1.has(it.kategorie)) continue;
+    const m = mapOldCategory(it.kategorie);
+    const upd = { ...it, _dirty: true };
+    if (m) { [upd.kategorie, upd.unterkategorie, upd.typ] = m; delete upd.kategorieAlt; }
+    else { upd.kategorieAlt = it.kategorie; upd.kategorie = ''; upd.unterkategorie = ''; upd.typ = ''; }
+    await DB.put('items', upd);
+    Object.assign(it, upd);
+    changed++;
+  }
+  return changed;
+}
+
 const ANLASS_DEFAULTS = ['Alltag', 'Arbeit', 'Freizeit', 'Sport', 'Outdoor', 'Festlich', 'Urlaub'];
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -326,6 +384,7 @@ const filters = JSON.parse(localStorage.getItem('ks_filters') || '{}');
 
 async function loadState() {
   items = (await DB.all('items')).filter((i) => !i._deleted);
+  if (await migrateCategories(items) && Auth.signedIn()) scheduleSync();
   photoMap = new Map((await DB.all('photos')).map((p) => [p.id, p]));
 }
 
@@ -543,9 +602,9 @@ async function pullChanges() {
 }
 
 /* ---------------- Oberfläche: Liste ---------------- */
-function valuesFor(key) {
+function valuesFor(key, pool = items) {
   const set = new Map();
-  for (const it of items) {
+  for (const it of pool) {
     const vals = key === 'anlass' ? (it.anlass || []) : [it[key]];
     for (const v of vals) if (v) set.set(v, (set.get(v) || 0) + 1);
   }
@@ -554,14 +613,28 @@ function valuesFor(key) {
 
 function renderFilters() {
   const box = $('#filters');
-  const defs = [...FIELDS, { key: 'anlass', label: 'Anlass' }];
+  const defs = [...CAT_KEYS, ...FIELDS, { key: 'anlass', label: 'Anlass' }];
+  // Unterkategorie/Art nur aus der gewählten Kategorie anbieten
+  const poolK = filters.kategorie ? items.filter((i) => i.kategorie === filters.kategorie) : items;
+  const poolU = filters.unterkategorie ? poolK.filter((i) => i.unterkategorie === filters.unterkategorie) : poolK;
   box.innerHTML = defs.map((f) => {
-    const vals = [...valuesFor(f.key).entries()].sort((a, b) => a[0].localeCompare(b[0], 'de'));
+    const pool = f.key === 'unterkategorie' ? poolK : f.key === 'typ' ? poolU : items;
+    const vals = [...valuesFor(f.key, pool).entries()];
+    if (CAT_KEYS.some((c) => c.key === f.key)) {
+      const rank = (v) => {
+        const sample = pool.find((i) => i[f.key] === v) || {};
+        return CAT.order.get(f.key === 'kategorie' ? v : f.key === 'unterkategorie' ? `${sample.kategorie}|${v}` : `${sample.kategorie}|${sample.unterkategorie}|${v}`) ?? 1e9;
+      };
+      vals.sort((a, b) => rank(a[0]) - rank(b[0]));
+    } else {
+      vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
+    }
     const cur = filters[f.key] || '';
-    if (cur && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
+    if (cur && cur !== CAT_NONE && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
+    const none = f.key === 'kategorie' ? items.filter((i) => !i.kategorie).length : 0;
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')
-    }</select></label>`;
+    }${none ? `<option value="${CAT_NONE}"${cur === CAT_NONE ? ' selected' : ''}>Nicht zugeordnet (${none})</option>` : ''}</select></label>`;
   }).join('') + '<button type="button" class="chipbtn reset" id="resetFilters">Zurücksetzen</button>';
   const n = Object.values(filters).filter(Boolean).length;
   $('#filterCount').textContent = n ? `(${n})` : '';
@@ -575,15 +648,17 @@ function filteredItems() {
     for (const [k, v] of Object.entries(filters)) {
       if (!v) continue;
       if (k === 'anlass') { if (!(it.anlass || []).includes(v)) return false; }
+      else if (v === CAT_NONE) { if (it[k]) return false; }
       else if (it[k] !== v) return false;
     }
     if (!terms.length) return true;
-    const hay = [it.name, it.notiz, ...(it.anlass || []), ...FIELDS.map((f) => it[f.key])].join(' ').toLowerCase();
+    const hay = [it.name, it.notiz, it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...FIELDS.map((f) => it[f.key])].join(' ').toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
   const sort = $('#sort').value;
   const cmp = (a, b, k) => String(a[k] || '').localeCompare(String(b[k] || ''), 'de') || String(a.name || '').localeCompare(String(b.name || ''), 'de');
   if (sort === 'new') list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  else if (sort === 'kategorie') list.sort((a, b) => catRank(a) - catRank(b) || cmp(a, b, 'name'));
   else list.sort((a, b) => cmp(a, b, sort));
   return list;
 }
@@ -598,7 +673,7 @@ function render() {
   $('#grid').innerHTML = list.map((it) => {
     const pid = (it.photos || [])[0];
     const url = pid ? thumbUrl(pid) : '';
-    const sub = [it.kategorie, it.farbe, it.groesse].filter(Boolean).join(' · ');
+    const sub = [it.typ || it.unterkategorie || it.kategorie, it.farbe, it.groesse].filter(Boolean).join(' · ');
     const n = (it.photos || []).length;
     return `<button type="button" class="card" data-id="${esc(it.id)}">
       ${url ? `<img class="thumb" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
@@ -616,7 +691,7 @@ async function openDetail(id) {
   if (!it) return;
   detailId = id;
   $('#detailTitle').textContent = it.name || 'Ohne Namen';
-  const rows = [...FIELDS.map((f) => [f.label, it[f.key]]), ['Anlass', (it.anlass || []).join(', ')], ['Notiz', it.notiz]]
+  const rows = [['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')], ...FIELDS.map((f) => [f.label, it[f.key]]), ['Anlass', (it.anlass || []).join(', ')], ['Notiz', it.notiz]]
     .filter(([, v]) => v);
   $('#detailFields').innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v).replace(/\n/g, '<br>')}</dd>`).join('')
     || '<dt>–</dt><dd class="muted">Keine Angaben</dd>';
@@ -657,6 +732,39 @@ function renderPhotoStrip() {
   }).join('');
 }
 
+/* ---------------- Kategorie-Auswahl ---------------- */
+function renderKatButton() {
+  const p = catPath(ed.kat);
+  $('#katText').textContent = p || 'Kategorie wählen';
+  $('#katBtn').classList.toggle('empty', !p);
+  $('#katAlt').hidden = !(ed.katAlt && !p);
+  $('#katAlt').textContent = `Bisher „${ed.katAlt}“ – bitte neu zuordnen.`;
+}
+function renderKatList() {
+  const q = $('#katSearch').value.trim().toLowerCase();
+  const cur = `${ed.kat.kategorie}|${ed.kat.unterkategorie}|${ed.kat.typ}`;
+  let html = '';
+  KATEGORIEN.forEach(([k, gs], i) => {
+    let inner = '';
+    gs.forEach(([u, as], j) => {
+      const all = !q || k.toLowerCase().includes(q) || u.toLowerCase().includes(q);
+      const hits = as.map((a, n) => [a, n]).filter(([a]) => all || a.toLowerCase().includes(q));
+      if (!hits.length) return;
+      inner += `<div class="kl2">${esc(u)}</div>` + hits.map(([a, n]) =>
+        `<button type="button" class="kleaf${`${k}|${u}|${a}` === cur ? ' active' : ''}" data-k="${i}|${j}|${n}">${esc(a)}</button>`).join('');
+    });
+    if (inner) html += `<section><h3 class="kl1">${esc(k)}</h3>${inner}</section>`;
+  });
+  $('#katList').innerHTML = html || '<p class="muted">Nichts gefunden.</p>';
+}
+function openKatPicker() {
+  $('#katSearch').value = '';
+  renderKatList();
+  $('#katDlg').showModal();
+  const act = $('#katList .kleaf.active');
+  if (act) act.scrollIntoView({ block: 'center' });
+}
+
 function openEditor(id = null) {
   const form = $('#editForm');
   form.reset();
@@ -668,7 +776,10 @@ function openEditor(id = null) {
     photos: (it?.photos || []).map((pid) => ({ id: pid, isNew: false })),
     removed: [],
     anlass: new Set(it?.anlass || []),
+    kat: { kategorie: it?.kategorie || '', unterkategorie: it?.unterkategorie || '', typ: it?.typ || '' },
+    katAlt: it?.kategorieAlt || '',
   };
+  renderKatButton();
   $('#editTitle').textContent = it ? 'Bearbeiten' : 'Neues Teil';
   form.elements.bezeichnung.value = it?.name || '';
   for (const f of FIELDS) form.elements[f.key].value = it?.[f.key] || '';
@@ -715,6 +826,8 @@ async function saveEditor() {
     _dirty: true,
   };
   for (const f of FIELDS) it[f.key] = form.elements[f.key].value.trim();
+  Object.assign(it, ed.kat);
+  if (it.kategorie) delete it.kategorieAlt;
 
   for (const p of ed.photos.filter((x) => x.isNew)) {
     const rec = { id: p.id, itemId: it.id, full: p.full, thumb: p.thumb, pendingUpload: true };
@@ -815,7 +928,7 @@ async function switchProvider(key) {
 }
 
 function exportCsv() {
-  const cols = [['Bezeichnung', 'name'], ...FIELDS.map((f) => [f.label, f.key]), ['Anlass', 'anlass'], ['Notiz', 'notiz'], ['Fotos', 'photos'], ['Angelegt', 'createdAt'], ['Geändert', 'updatedAt']];
+  const cols = [['Bezeichnung', 'name'], ...CAT_KEYS.map((f) => [f.label, f.key]), ...FIELDS.map((f) => [f.label, f.key]), ['Anlass', 'anlass'], ['Notiz', 'notiz'], ['Fotos', 'photos'], ['Angelegt', 'createdAt'], ['Geändert', 'updatedAt']];
   const cell = (v) => {
     const s = String(v ?? '');
     return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -874,6 +987,8 @@ function wireEvents() {
     const k = e.target.dataset.filter;
     if (!k) return;
     filters[k] = e.target.value;
+    if (k === 'kategorie') { delete filters.unterkategorie; delete filters.typ; }
+    if (k === 'unterkategorie') delete filters.typ;
     localStorage.setItem('ks_filters', JSON.stringify(filters));
     render();
   });
@@ -882,6 +997,24 @@ function wireEvents() {
     for (const k of Object.keys(filters)) delete filters[k];
     localStorage.setItem('ks_filters', '{}');
     render();
+  });
+
+  // Kategorie-Auswahl
+  $('#katBtn').addEventListener('click', openKatPicker);
+  $('#katSearch').addEventListener('input', renderKatList);
+  $('#katList').addEventListener('click', (e) => {
+    const b = e.target.closest('.kleaf');
+    if (!b) return;
+    const [i, j, n] = b.dataset.k.split('|').map(Number);
+    const [k, gs] = KATEGORIEN[i];
+    ed.kat = { kategorie: k, unterkategorie: gs[j][0], typ: gs[j][1][n] };
+    renderKatButton();
+    $('#katDlg').close();
+  });
+  $('#katReset').addEventListener('click', () => {
+    ed.kat = { kategorie: '', unterkategorie: '', typ: '' };
+    renderKatButton();
+    $('#katDlg').close();
   });
 
   // Detail

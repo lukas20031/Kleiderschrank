@@ -1,0 +1,71 @@
+'use strict';
+/* Feste Kategorien (übernommen aus Whering): Kategorie › Unterkategorie › Art */
+const KATEGORIEN = [
+  ['Oberteile', [
+    ['Hemden', ['Langarmhemd', 'Kurzarmhemd', 'Bluse', 'Dreiviertelarm-Hemd']],
+    ['T-Shirts', ['T-Shirt', 'V-Ausschnitt', 'Langarmshirt', 'Grafik-T-Shirt', 'Poloshirt', 'Kurzarmshirt', 'T-Shirt mit V-Ausschnitt', 'Langarmshirt mit V-Ausschnitt', 'Grafik-Kurzarmshirt', 'Grafik-Langarmshirt', 'Dreiviertelarm-Shirt']],
+    ['Top', ['Weste', 'Unterhemd', 'Croptop', 'Bustier', 'Crop-Weste', 'Schößchen-Top', 'Korsett-Top', 'Neckholder-Top', 'Bandeau-Top', 'Tanktop']],
+    ['Pullover und Strickjacken', ['Pullover', 'Pullover mit Zopfmuster', 'Sweatshirtjacke', 'Sweatshirtweste', 'Stehkragen', 'Rollkragen', 'Strickjacke', 'Shrug', 'Bolero']],
+    ['Hoodies & Sweatshirts', ['Hoodie', 'Sweatjacke', 'Fleece', 'Sweatshirt']],
+    ['Sportbekleidung', ['Trainingsjacke', 'Sport-BH', 'Trikot', 'Sportoberteil', 'Yoga-Oberteil']],
+    ['Andere Oberteile', ['Anderes Oberteil']],
+  ]],
+  ['Unterteile', [
+    ['Röcke', ['Rock', 'Bleistiftrock', 'Minirock', 'Midirock', 'Maxirock', 'Kostümrock', 'A-Linien-Rock', 'Jeansrock', 'High-Waist-Rock', 'Schmal geschnittener Rock', 'Skaterrock', 'Skort', 'Meerjungfrauenrock', 'Cargorock']],
+    ['Hosen', ['Hose', 'Anzughose', 'Kurz geschnittene Hose', 'Schlaghose', 'Hosen mit weitem Bein', 'Chinohose', 'Stoffhose', 'Cargohose', 'Capri-/Röhrenhose', 'Culotte', 'Cordhose', 'Leinenhose', 'Carpenter-Hose']],
+    ['Kurze Hose', ['Shorts', 'Jeansshorts', 'Fließende Shorts', 'Cargo-Shorts', 'Chino-Shorts', 'Schmal geschnittene Shorts', 'Leinenshorts', 'Bermudashorts']],
+    ['Jeans', ['Jeans', 'Mom-Jeans', 'Boyfriend-Jeans', 'Baggy-Jeans', 'Skinny-Jeans', 'Bootcut-Jeans', 'Gerade geschnittene Jeans', 'High-Waist-Jeans', 'Kurz geschnittene Jeans', 'Jeans mit Schlag', 'Jeans mit weitem Bein', 'Schmal geschnittene Jeans']],
+    ['Sportbekleidung', ['Leggings', 'Trainingshose', 'Trainingsshorts', 'Laufshorts', 'Radshorts', 'Sportshorts', 'Jogginghose']],
+    ['Andere Unterteile', ['Kilt', 'Andere Unterteile']],
+  ]],
+  ['Outdoorbekleidung', [
+    ['Mäntel', ['Mantel', 'Regenmantel', 'Anorak', 'Trenchcoat', 'Windjacke', 'Parka', 'Daunenmantel', 'Fellmantel']],
+    ['Jacken', ['Jacke', 'Anzugjacke', 'Jeansjacke', 'Bomberjacke', 'Pufferjacke', 'Lederjacke', 'Gilet', 'Weste', 'Blazer']],
+    ['Cape', ['Capes', 'Poncho']],
+  ]],
+  ['Ganzkörper', [
+    ['Kleid', ['Kleid', 'Freizeitkleid', 'Minikleid', 'Midikleid', 'Maxikleid', 'Blumenkleid', 'Cocktailkleid', 'Abendkleid', 'Ballkleid']],
+    ['Anzüge', ['Freizeitanzug', 'Businessanzug', 'Anzugrock', 'Smoking', 'Leinenanzug', 'Oversize-Anzug', 'Zweiteiler']],
+    ['Arbeitskleidung', ['Normale Arbeitskleidung', 'Overalls', 'Latzhosen']],
+    ['Jumpsuits', ['Jumpsuit', 'Kurz geschnittener Jumpsuit', 'Playsuit']],
+    ['Bodies', ['Gymnastikanzug', 'Bodysuit']],
+    ['Sportbekleidung', ['Sportbekleidung', 'Trainingsanzug']],
+    ['Gewänder', ['Kaftan', 'Kimono', 'Tunika', 'Bademantel']],
+  ]],
+  ['Unterwäsche & Nachtwäsche', [
+    ['Unterwäsche', ['Unterhosen', 'Slips', 'BH', 'Dessous', 'Korsett', 'Boxershorts', 'Boxer Briefs', 'Tiefschutz', 'Andere Unterwäsche', 'Stringtanga']],
+    ['Nachtwäsche', ['Pyjamas', 'Pyjamaoberteile', 'Pyjamahosen', 'Nachthemd', 'Einteiler', 'Morgenmantel']],
+    ['Rollenspiel', ['Handschellen', 'Body-Harness', 'Kragen', 'Opernhandschuhe', 'Catsuit', 'Maske', 'Andere Rollenspiele']],
+  ]],
+  ['Taschen', [
+    ['Freizeittaschen', ['Tasche', 'Handtasche', 'Clutch', 'Umhängetasche', 'Mini-Tasche', 'Micro-Tasche', 'Crossover-Tasche', 'Bauchtasche', 'Gürteltasche', 'Büchertasche', 'Beuteltasche', 'Canvastasche', 'Korbtasche']],
+    ['Arbeitstaschen', ['Schultertasche', 'Aktentasche', 'Laptoptasche', 'Tablet-Tasche', 'Tragetasche', 'Sporttasche', 'Bowlingtasche']],
+    ['Reisegepäck', ['Rollenkoffer (Hartschale)', 'Rollenkoffer (Stoff)', 'Reisetasche/Handgepäck', 'Seesack', 'Kleidersack/-hülle', 'Kosmetiktasche', 'Schmuckkästchen']],
+    ['Rucksäcke', ['Rucksack', 'Foldover-Rucksack', 'Minirucksack', 'Rucksack mit Reißverschluss', 'Rucksack mit Kordelzug']],
+    ['Geldbörsen', ['Geldbörse', 'Brieftasche', 'Etui', 'Kartenhalter']],
+  ]],
+  ['Accessoires', [
+    ['Krawatten', ['Krawatte', 'Fliege', 'Halstuch', 'Einstecktuch']],
+    ['Schals und Handschuhe', ['Schal', 'Handschuhe', 'Snood', 'Schultertuch']],
+    ['Socken und Strumpfhosen', ['Socken', 'Knöchelsocken', 'Sportsocken', 'Hohe Socken', 'Strumpfhosen', 'Kniestrümpfe', 'Strumpfband', 'Strumpfhalter']],
+    ['Gürtel', ['Gürtel', 'Breite Gürtel', 'Schmale Gürtel', 'Hüftgürtel', 'Kummerbund', 'Hosenträger']],
+    ['Brille', ['Brillen', 'Sonnenbrille', 'Sonnenbrillenkette']],
+    ['Hüte', ['Hut', 'Barett', 'Eleganter Hut', 'Fascinator', 'Kappe', 'Beanie', 'Bucket Hat', 'Fedora', 'Sonnenhut', 'Eng anliegende Mütze', 'Filzhut', 'Panamahut']],
+    ['Haaraccessoires', ['Stirnband', 'Turban', 'Haarklammern', 'Haarbänder', 'Kopftuch', 'Haarspange', 'Tiara']],
+    ['Schmuck', ['Echtschmuck', 'Brosche', 'Ohrringe', 'Ring', 'Kette', 'Choker', 'Armband', 'Armreifen', 'Fußkettchen', 'Manschettenknöpfe', 'Uhr', 'Ohrmanschetten', 'Körperschmuck', 'Körperkette', 'Anderer Schmuck']],
+    ['Andere Accessoires', ['Kopfhörer', 'Regenschirm', 'Buch', 'Strandball', 'Fahrradhelm', 'Gurtzeug', 'Taschengurt', 'Geldbeutelkette', 'Schlüsselanhänger', 'Andere Accessoires']],
+  ]],
+  ['Schuhe', [
+    ['Flache Schuhe', ['Pumps', 'Slipper', 'Budapester', 'Mary Janes', 'Plateausohle', 'Schnürschuhe', 'Ballerinas', 'Segelschuhe']],
+    ['Absatzschuhe', ['Absatzschuhe', 'High Heels', 'Schuhe mit niedrigem Absatz', 'Pumps', 'Stilettos', 'Loafer mit Absatz', 'Sandalen mit Absatz', 'Plateau-Heels', 'Blockabsatz', 'Wedges', 'Mules mit Absatz', 'Peeptoes', 'Slingpumps', 'Stiefel mit Absatz', 'Riemchensandalen', 'Kitten-Heels']],
+    ['Sandale', ['Sandalen', 'Flip Flops', 'Holzsandale', 'Sandale mit Keilabsatz', 'Plateausandale', 'Clogs', 'Mules', 'Birkenstocks', 'Espadrilles', 'Pantoletten', 'Jelly-Schuhe']],
+    ['Stiefel', ['Boots', 'Stiefelette', 'Wadenhoher Stiefel', 'Kniehoher Stiefel', 'Overknee-Stiefel', 'Plateaustiefel', 'Schnürstiefel', 'Reitstiefel', 'Chelsea-Boots', 'Overknee', 'Westernstiefel', 'Cowboystiefel']],
+    ['Sportschuhe', ['Turnschuhe', 'Sneaker', 'Canvas-Sneaker', 'Leder-Sneaker', 'Hightop-Sneaker', 'Leinenschuhe', 'Rollschuhe']],
+    ['Arbeitskleidung', ['Crocs', 'Bootsschuhe', 'Wanderschuhe', 'Gummistiefel', 'Arbeitsstiefel']],
+    ['Slipper', ['Slipper', 'Mokassins']],
+  ]],
+  ['Bademode', [
+    ['Badebekleidung', ['Bikinioberteil', 'Bikinihose', 'Badeanzug', 'Bikini', 'Tankini', 'Badehose']],
+    ['Beachwear', ['Strandkleidung', 'Pareo', 'Sarong']],
+  ]],
+];

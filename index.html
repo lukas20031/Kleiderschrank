@@ -69,6 +69,10 @@
       <label class="field">Bezeichnung
         <input name="bezeichnung" required placeholder="z. B. Blaue Levi's 501" autocomplete="off">
       </label>
+      <div class="field">Kategorie
+        <button type="button" id="katBtn" class="katbtn"><span id="katText">Kategorie wählen</span><span aria-hidden="true">›</span></button>
+        <span id="katAlt" class="hint" hidden></span>
+      </div>
       <div id="fieldGrid" class="fieldgrid"></div>
 
       <div class="field">Anlass
@@ -87,6 +91,17 @@
       <p id="metaInfo" class="hint"></p>
     </div>
   </form>
+</dialog>
+
+<!-- Kategorie-Auswahl -->
+<dialog id="katDlg" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Abbrechen</button>
+    <h2>Kategorie</h2>
+    <button type="button" class="textbtn" id="katReset">Entfernen</button>
+  </header>
+  <div class="katsearch"><input id="katSearch" type="search" placeholder="Suchen …" autocomplete="off"></div>
+  <div class="sheetbody katlist" id="katList"></div>
 </dialog>
 
 <!-- Photo actions -->
@@ -154,6 +169,7 @@
 
 <div id="toast" class="toast" hidden></div>
 
+<script src="kategorien.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
