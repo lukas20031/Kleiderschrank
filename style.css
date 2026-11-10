@@ -269,3 +269,14 @@ code { font-size: 12.5px; background: var(--card); border: 1px solid var(--line)
 .croptools .seg button { color: #eee; }
 .croptools .seg button + button { border-color: #444; }
 .croptools .seg button.active { background: #eee; color: #111; }
+
+/* Freigestellte Fotos (transparent) */
+.cut { object-fit: contain !important; background: #f3f0ea; }
+.card .thumb.cut { padding: 8px; }
+.cropwrap canvas { background: repeating-conic-gradient(#3a3a3a 0 25%, #2a2a2a 0 50%) 0 0 / 16px 16px; }
+.cropstage { position: relative; }
+.cropbusy { position: absolute; inset: 0; z-index: 5; display: grid; place-content: center; justify-items: center; gap: 14px; background: rgba(0,0,0,.6); color: #fff; font-size: 15px; text-align: center; padding: 20px; }
+.spinner { width: 36px; height: 36px; border-radius: 50%; border: 4px solid rgba(255,255,255,.25); border-top-color: #fff; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.croptools .bgbtn { width: 100%; max-width: 420px; padding: 10px; font-weight: 600; background: #2f4f4b; border-color: #4a7a73; }
+.croptools button:disabled { opacity: .45; }

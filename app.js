@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -472,7 +472,7 @@ async function fullUrl(pid) {
   let rec = photoMap.get(pid) || await DB.get('photos', pid);
   if (!rec?.full && Auth.signedIn() && navigator.onLine) {
     try {
-      const blob = await Store().download(`fotos/${pid}.jpg`);
+      const blob = await Store().download(photoFile(pid));
       if (blob) {
         rec = { ...(rec || { id: pid }), full: blob };
         await DB.put('photos', rec);
@@ -492,6 +492,16 @@ function dropUrls(pid) {
   }
 }
 
+/* ---------------- Foto-Dateien ----------------
+ * Fotos mit transparentem Hintergrund haben eine ID mit Endung ".png" und werden als PNG gespeichert,
+ * alle anderen als JPG:  fotos/<id>.jpg + fotos/<id>_t.jpg  bzw.  fotos/<id>.png + fotos/<id>_t.png */
+const isPng = (pid) => pid.endsWith('.png');
+const photoFile = (pid, thumb = false) => {
+  const base = isPng(pid) ? pid.slice(0, -4) : pid;
+  return `fotos/${base}${thumb ? '_t' : ''}.${isPng(pid) ? 'png' : 'jpg'}`;
+};
+const photoMime = (pid) => (isPng(pid) ? 'image/png' : 'image/jpeg');
+
 /* ---------------- Bildverarbeitung ---------------- */
 async function loadBitmap(file) {
   try {
@@ -506,15 +516,28 @@ async function loadBitmap(file) {
     } finally { URL.revokeObjectURL(url); }
   }
 }
-function toJpeg(src, max, q) {
-  const w = src.width, h = src.height;
-  const s = Math.min(1, max / Math.max(w, h));
+function scaled(src, max) {
+  const s = Math.min(1, max / Math.max(src.width, src.height));
   const c = document.createElement('canvas');
-  c.width = Math.round(w * s); c.height = Math.round(h * s);
+  c.width = Math.round(src.width * s); c.height = Math.round(src.height * s);
+  return c;
+}
+function toBlob(c, type, q) {
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Bild konnte nicht umgewandelt werden'))), type, q));
+}
+function toJpeg(src, max, q) {
+  const c = scaled(src, max);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   ctx.drawImage(src, 0, 0, c.width, c.height);
-  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Bild konnte nicht umgewandelt werden'))), 'image/jpeg', q));
+  return toBlob(c, 'image/jpeg', q);
+}
+function toPng(src, max) {
+  const c = scaled(src, max);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return toBlob(c, 'image/png');
 }
 /** Bild (Datei/Blob) in eine Arbeitsfläche laden, höchstens 3200 px Kantenlänge */
 async function fileToCanvas(file) {
@@ -526,8 +549,94 @@ async function fileToCanvas(file) {
   bmp.close?.();
   return c;
 }
-async function canvasToPhoto(canvas) {
+async function canvasToPhoto(canvas, transparent = false) {
+  if (transparent) return { full: await toPng(canvas, 1600), thumb: await toPng(canvas, 480) };
   return { full: await toJpeg(canvas, 1600, 0.85), thumb: await toJpeg(canvas, 480, 0.78) };
+}
+
+/* ---------------- Hintergrund entfernen (@imgly/background-removal, läuft im Browser) ----------------
+ * Bibliothek und KI-Modell (~40 MB) werden beim ersten Gebrauch geladen und vom Service Worker zwischengespeichert. */
+let bgLib = null;
+function loadBgLib() {
+  bgLib ??= import('@imgly/background-removal').catch((e) => { bgLib = null; throw e; });
+  return bgLib;
+}
+/** Reste entfernen: fast unsichtbare Pixel (Alpha < 32) sowie abgetrennte Flecken.
+ *  Behalten werden das größte zusammenhängende Motiv und alle Teile mit mindestens 15 % seiner Fläche
+ *  (z. B. der zweite Schuh eines Paars). */
+function cleanAlpha(c) {
+  // 1. Zusammenhängende Flächen auf verkleinerter Maske finden
+  const t = scaled(c, 512);
+  const tctx = t.getContext('2d');
+  tctx.drawImage(c, 0, 0, t.width, t.height);
+  const w = t.width, h = t.height;
+  const td = tctx.getImageData(0, 0, w, h).data;
+  const label = new Int32Array(w * h);
+  const areas = [0];
+  const stack = [];
+  for (let i = 0; i < w * h; i++) {
+    if (label[i] || td[i * 4 + 3] <= 128) continue;
+    const id = areas.length;
+    let area = 0;
+    label[i] = id; stack.push(i);
+    while (stack.length) {
+      const p = stack.pop(); area++;
+      const x = p % w, y = (p - x) / w;
+      for (const q of [x > 0 ? p - 1 : -1, x < w - 1 ? p + 1 : -1, y > 0 ? p - w : -1, y < h - 1 ? p + w : -1]) {
+        if (q >= 0 && !label[q] && td[q * 4 + 3] > 128) { label[q] = id; stack.push(q); }
+      }
+    }
+    areas.push(area);
+  }
+  const maxArea = Math.max(0, ...areas);
+  const keepLabel = areas.map((a) => a >= maxArea * 0.15 && a > 0);
+  // 2. Behaltene Flächen um 3 px erweitern, damit weiche Kanten erhalten bleiben
+  let keep = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) if (keepLabel[label[i]]) keep[i] = 1;
+  for (let r = 0; r < 3; r++) {
+    const k2 = keep.slice();
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (keep[i]) continue;
+      if ((x > 0 && keep[i - 1]) || (x < w - 1 && keep[i + 1]) || (y > 0 && keep[i - w]) || (y < h - 1 && keep[i + w])) k2[i] = 1;
+    }
+    keep = k2;
+  }
+  // 3. Auf das Bild in voller Auflösung anwenden
+  const ctx = c.getContext('2d');
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+  const fx = w / c.width, fy = h / c.height;
+  for (let y = 0; y < c.height; y++) {
+    const row = Math.min(h - 1, Math.floor(y * fy)) * w;
+    for (let x = 0; x < c.width; x++) {
+      const i = (y * c.width + x) * 4 + 3;
+      if (d[i] < 32 || !keep[row + Math.min(w - 1, Math.floor(x * fx))]) d[i] = 0;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+/** Begrenzungsrahmen des sichtbaren Motivs (für automatischen Zuschnitt).
+ *  Zählt deckende Pixel je Zeile/Spalte, damit vereinzelte Reste im Hintergrund den Rahmen nicht aufblähen. */
+function alphaBounds(c) {
+  const t = scaled(c, 400);
+  const ctx = t.getContext('2d');
+  ctx.drawImage(c, 0, 0, t.width, t.height);
+  const w = t.width, h = t.height;
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const cols = new Uint32Array(w), rows = new Uint32Array(h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (d[(y * w + x) * 4 + 3] > 128) { cols[x]++; rows[y]++; }
+  }
+  const minC = Math.max(2, h * 0.02), minR = Math.max(2, w * 0.02);
+  let x0 = 0, x1 = w - 1, y0 = 0, y1 = h - 1;
+  while (x0 < w && cols[x0] < minC) x0++;
+  while (x1 > x0 && cols[x1] < minC) x1--;
+  while (y0 < h && rows[y0] < minR) y0++;
+  while (y1 > y0 && rows[y1] < minR) y1--;
+  if (x0 >= w || y0 >= h) return null;
+  const f = c.width / w;
+  return { x: x0 * f, y: y0 * f, w: (x1 - x0 + 1) * f, h: (y1 - y0 + 1) * f };
 }
 
 /* ---------------- Foto drehen / zuschneiden ---------------- */
@@ -535,9 +644,12 @@ const Crop = {
   src: null, rect: null, ratio: null, scale: 1, drag: null, resolve: null,
 
   /** Öffnet den Editor. Ergebnis: { canvas } | { canvas, skipRest } | null (verworfen) */
-  edit(canvas, title, moreLeft = false) {
+  edit(canvas, title, moreLeft = false, transparent = false) {
+    this.session = (this.session || 0) + 1;
+    this.setBusy(null);
     this.src = canvas;
     this.orig = canvas;
+    this.transparent = this.origTransparent = transparent;
     this.ratio = null;
     for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === '');
     $('#cropTitle').textContent = title;
@@ -548,6 +660,9 @@ const Crop = {
     return new Promise((res) => { this.resolve = res; });
   },
   finish(result) {
+    if (result) result.transparent = this.transparent;
+    this.session++;
+    this.setBusy(null);
     const r = this.resolve;
     this.resolve = null;
     $('#cropDlg').close();
@@ -634,6 +749,55 @@ const Crop = {
     this.drawBox();
   },
   up() { this.drag = null; },
+
+  setBusy(text) {
+    this.busy = !!text;
+    $('#cropBusy').hidden = !text;
+    if (text) $('#cropBusyText').textContent = text;
+    for (const b of document.querySelectorAll('#cropDlg .croptools button, #cropOk')) b.disabled = !!text;
+  },
+  async removeBg() {
+    if (this.busy) return;
+    const session = this.session;
+    this.setBusy('Wird vorbereitet …');
+    try {
+      const { removeBackground } = await loadBgLib();
+      // Eingabe auf höchstens 2000 px verkleinern – schneller; gespeichert werden ohnehin 1600 px
+      const input = scaled(this.src, 2000);
+      input.getContext('2d').drawImage(this.src, 0, 0, input.width, input.height);
+      const blob = await toBlob(input, this.transparent ? 'image/png' : 'image/jpeg', 0.95);
+      const out = await removeBackground(blob, {
+        model: 'isnet_quint8',
+        output: { format: 'image/png' },
+        progress: (key, cur, total) => {
+          if (session !== this.session) return;
+          if (key.startsWith('fetch:/models')) this.setBusy(`KI-Modell wird geladen … ${Math.round((cur / total) * 100)} %`);
+          else if (key.startsWith('compute')) this.setBusy('Hintergrund wird entfernt …');
+        }, // Hinweis: der Callback darf nichts zurückgeben, sonst bricht die Bibliothek ab
+      });
+      if (session !== this.session) return; // inzwischen abgebrochen
+      const c = await fileToCanvas(out);
+      cleanAlpha(c);
+      this.src = c;
+      this.transparent = true;
+      this.setRatio(null);
+      // Rahmen automatisch eng um das Kleidungsstück legen (mit etwas Rand)
+      const b = alphaBounds(c);
+      if (b) {
+        const m = Math.max(b.w, b.h) * 0.04;
+        const x = Math.max(0, b.x - m), y = Math.max(0, b.y - m);
+        this.rect = { x, y, w: Math.min(c.width, b.x + b.w + m) - x, h: Math.min(c.height, b.y + b.h + m) - y };
+      }
+      this.layout();
+    } catch (e) {
+      console.error(e);
+      if (session === this.session) {
+        toast(navigator.onLine ? `Freistellen fehlgeschlagen: ${e.message}` : 'Zum ersten Freistellen wird eine Internetverbindung gebraucht (KI-Modell wird geladen).');
+      }
+    } finally {
+      if (session === this.session) this.setBusy(null);
+    }
+  },
 };
 
 /** Fotos nacheinander im Editor öffnen und übernehmen */
@@ -641,14 +805,16 @@ async function addPhotos(files) {
   for (let i = 0; i < files.length; i++) {
     try {
       let canvas = await fileToCanvas(files[i]);
+      let transparent = false;
       if (!skipEditing) {
         const res = await Crop.edit(canvas, files.length > 1 ? `Foto ${i + 1} von ${files.length}` : 'Foto bearbeiten', i < files.length - 1);
         if (!res) continue; // verworfen
         canvas = res.canvas;
+        transparent = res.transparent;
         if (res.skipRest) skipEditing = true;
       }
-      const { full, thumb } = await canvasToPhoto(canvas);
-      ed.photos.push({ id: uid(), isNew: true, full, thumb, url: URL.createObjectURL(thumb) });
+      const { full, thumb } = await canvasToPhoto(canvas, transparent);
+      ed.photos.push({ id: uid() + (transparent ? '.png' : ''), isNew: true, full, thumb, url: URL.createObjectURL(thumb) });
       renderPhotoStrip();
     } catch (e) {
       toast('Foto konnte nicht gelesen werden: ' + e.message);
@@ -667,12 +833,12 @@ async function reEditPhoto(idx) {
     if (u) blob = await (await fetch(u)).blob();
   }
   if (!blob) return toast('Das Foto ist gerade nicht verfügbar.');
-  const res = await Crop.edit(await fileToCanvas(blob), 'Foto bearbeiten');
+  const res = await Crop.edit(await fileToCanvas(blob), 'Foto bearbeiten', false, isPng(p.id));
   if (!res) return;
-  const { full, thumb } = await canvasToPhoto(res.canvas);
+  const { full, thumb } = await canvasToPhoto(res.canvas, res.transparent);
   if (p.isNew) URL.revokeObjectURL(p.url); else ed.removed.push(p.id);
   // Bearbeitetes Foto ersetzt das alte an derselben Stelle
-  ed.photos[idx] = { id: uid(), isNew: true, full, thumb, url: URL.createObjectURL(thumb) };
+  ed.photos[idx] = { id: uid() + (res.transparent ? '.png' : ''), isNew: true, full, thumb, url: URL.createObjectURL(thumb) };
   renderPhotoStrip();
 }
 
@@ -748,12 +914,12 @@ async function pushChanges() {
   const S = Store();
   for (const ph of await DB.all('photos')) {
     if (ph.pendingDelete) {
-      await S.del(`fotos/${ph.id}.jpg`);
-      await S.del(`fotos/${ph.id}_t.jpg`);
+      await S.del(photoFile(ph.id));
+      await S.del(photoFile(ph.id, true));
       await DB.del('photos', ph.id);
     } else if (ph.pendingUpload) {
-      await S.put(`fotos/${ph.id}.jpg`, ph.full, 'image/jpeg');
-      await S.put(`fotos/${ph.id}_t.jpg`, ph.thumb, 'image/jpeg');
+      await S.put(photoFile(ph.id), ph.full, photoMime(ph.id));
+      await S.put(photoFile(ph.id, true), ph.thumb, photoMime(ph.id));
       const cur = await DB.get('photos', ph.id);
       if (cur && !cur.pendingDelete) { cur.pendingUpload = false; await DB.put('photos', cur); }
     }
@@ -811,7 +977,7 @@ async function pullChanges() {
   for (const it of all) {
     for (const pid of it.photos || []) {
       if (have.has(pid)) continue;
-      const thumb = await S.download(`fotos/${pid}_t.jpg`);
+      const thumb = await S.download(photoFile(pid, true));
       if (thumb) await DB.put('photos', { id: pid, itemId: it.id, thumb, full: null });
     }
   }
@@ -895,7 +1061,7 @@ function render() {
     const farben = fieldValues(it, 'farben');
     const n = (it.photos || []).length;
     return `<button type="button" class="card" data-id="${esc(it.id)}">
-      ${url ? `<img class="thumb" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
+      ${url ? `<img class="thumb${isPng(pid) ? ' cut' : ''}" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
       ${n > 1 ? `<span class="nphotos">${n} Fotos</span>` : ''}
       ${it._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
       <div class="info"><div class="title${it.name ? '' : ' auto'}">${esc(itemTitle(it))}</div>
@@ -921,7 +1087,7 @@ async function openDetail(id) {
     || '<dt>–</dt><dd class="muted">Keine Angaben</dd>';
   const gal = $('#detailPhotos');
   const pids = it.photos || [];
-  gal.innerHTML = pids.map((pid) => `<img data-pid="${esc(pid)}" src="${thumbUrl(pid)}" alt="">`).join('');
+  gal.innerHTML = pids.map((pid) => `<img data-pid="${esc(pid)}" src="${thumbUrl(pid)}" alt=""${isPng(pid) ? ' class="cut"' : ''}>`).join('');
   $('#detail').showModal();
   for (const img of gal.querySelectorAll('img')) {
     fullUrl(img.dataset.pid).then((u) => { if (u) img.src = u; });
@@ -1014,7 +1180,7 @@ function renderAnlass() {
 function renderPhotoStrip() {
   $('#photoStrip').innerHTML = ed.photos.map((p, i) => {
     const url = p.isNew ? p.url : thumbUrl(p.id);
-    return `<div class="ph"><img src="${url}" data-idx="${i}" alt=""></div>`;
+    return `<div class="ph"><img src="${url}" data-idx="${i}" alt=""${isPng(p.id) ? ' class="cut"' : ''}></div>`;
   }).join('');
 }
 
@@ -1403,7 +1569,8 @@ function wireEvents() {
   $('#cropDlg').addEventListener('cancel', (e) => { e.preventDefault(); Crop.finish(null); });
   $('#rotL').addEventListener('click', () => Crop.rotate(-1));
   $('#rotR').addEventListener('click', () => Crop.rotate(1));
-  $('#cropReset').addEventListener('click', () => { Crop.src = Crop.orig; Crop.setRatio(null); Crop.layout(); });
+  $('#cropReset').addEventListener('click', () => { Crop.src = Crop.orig; Crop.transparent = Crop.origTransparent; Crop.setRatio(null); Crop.layout(); });
+  $('#cropBg').addEventListener('click', () => Crop.removeBg());
   $('#cropRatio').addEventListener('click', (e) => { const b = e.target.closest('[data-r]'); if (b) Crop.setRatio(Number(b.dataset.r) || null); });
   $('#cropWrap').addEventListener('pointerdown', (e) => Crop.down(e));
   window.addEventListener('pointermove', (e) => Crop.move(e));

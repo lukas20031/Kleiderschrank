@@ -13,6 +13,16 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
+<!-- Bibliothek zum Freistellen; wird erst beim ersten Antippen von „Hintergrund entfernen“ geladen -->
+<script type="importmap">
+{
+  "imports": {
+    "@imgly/background-removal": "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/index.mjs",
+    "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.bundle.min.mjs",
+    "onnxruntime-web/webgpu": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.webgpu.bundle.min.mjs"
+  }
+}
+</script>
 </head>
 <body>
 <header class="topbar">
@@ -142,6 +152,7 @@
     <button type="button" class="textbtn strong" id="cropOk">Übernehmen</button>
   </header>
   <div class="cropstage" id="cropStage">
+    <div class="cropbusy" id="cropBusy" hidden><div class="spinner"></div><p id="cropBusyText"></p></div>
     <div class="cropwrap" id="cropWrap">
       <canvas id="cropCanvas"></canvas>
       <div class="cropbox" id="cropBox">
@@ -151,6 +162,7 @@
     </div>
   </div>
   <div class="croptools">
+    <button type="button" class="chipbtn bgbtn" id="cropBg">✨ Hintergrund entfernen</button>
     <div class="row">
       <button type="button" class="chipbtn" id="rotL" aria-label="Nach links drehen">⟲ Links</button>
       <button type="button" class="chipbtn" id="rotR" aria-label="Nach rechts drehen">Rechts ⟳</button>
