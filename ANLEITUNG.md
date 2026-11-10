@@ -54,7 +54,7 @@ Microsoft lässt die Anmeldung bei reinen Web-Apps nach etwa 24 Stunden ablaufen
 - **iPhone:** Die URL in Safari öffnen, dann *Teilen › Zum Home-Bildschirm*. Anschließend die App vom Home-Bildschirm starten und dort einmal anmelden. Safari und die Home-Bildschirm-App haben getrennte Speicher.
 - **Android:** Die URL in Chrome öffnen, dann *Menü › App installieren*.
 
-Fotos lassen sich direkt mit der Kamera aufnehmen oder aus der Galerie wählen, mehrere auf einmal. Sie werden auf 1600 px verkleinert (Vorschau 480 px), damit Cloud und Handy nicht volllaufen. Pro Teil mit drei Fotos fällt etwa 1 MB an.
+Fotos lassen sich mit „Foto aufnehmen“ direkt mit der Kamera machen oder über „Aus Galerie“ auswählen, dort auch mehrere auf einmal. Vor dem Speichern öffnet sich jedes Foto in einem Editor zum Drehen und Zuschneiden. Später geht das auch noch über Antippen des Fotos und dann „Drehen / Zuschneiden“. Sie werden auf 1600 px verkleinert (Vorschau 480 px), damit Cloud und Handy nicht volllaufen. Pro Teil mit drei Fotos fällt etwa 1 MB an.
 
 ---
 

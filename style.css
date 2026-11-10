@@ -210,6 +210,8 @@ code { font-size: 12.5px; background: var(--card); border: 1px solid var(--line)
   content: "Titel"; position: absolute; left: 6px; bottom: 6px; font-size: 10px;
   background: var(--accent); color: #fff; padding: 1px 6px; border-radius: 999px;
 }
+.addrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.addrow .addphoto { margin-top: 0; display: flex; align-items: center; justify-content: center; gap: 8px; }
 .addphoto {
   display: block; text-align: center; padding: 12px; margin-top: 8px;
   border: 1.5px dashed var(--line); border-radius: 12px; color: var(--brand); cursor: pointer; font-weight: 600;
@@ -236,3 +238,34 @@ code { font-size: 12.5px; background: var(--card); border: 1px solid var(--line)
   background: #222; color: #fff; padding: 9px 14px; border-radius: 10px; font-size: 14px; z-index: 50;
   max-width: 90vw;
 }
+
+/* Foto drehen / zuschneiden */
+.cropdlg { width: 100%; height: 100%; max-width: 100%; max-height: 100%; margin: 0; background: #111; color: #eee; }
+.cropdlg[open] { display: flex; flex-direction: column; }
+.cropdlg .sheethead { background: #1b1b1b; border-color: #333; color: #eee; }
+.cropdlg .textbtn { color: #9fe0d5; }
+.cropstage { flex: 1; min-height: 0; display: grid; place-items: center; padding: 16px; overflow: hidden; }
+.cropwrap { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; }
+.cropwrap canvas { display: block; }
+.cropbox { position: absolute; box-shadow: 0 0 0 9999px rgba(0,0,0,.55); outline: 2px solid #fff; cursor: move; }
+.cropwrap { overflow: hidden; }
+.cropbox .grid { position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(to right, transparent calc(33.33% - .5px), rgba(255,255,255,.45) calc(33.33% - .5px), rgba(255,255,255,.45) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.45) calc(66.66% - .5px), rgba(255,255,255,.45) calc(66.66% + .5px), transparent calc(66.66% + .5px)),
+    linear-gradient(to bottom, transparent calc(33.33% - .5px), rgba(255,255,255,.45) calc(33.33% - .5px), rgba(255,255,255,.45) calc(33.33% + .5px), transparent calc(33.33% + .5px), transparent calc(66.66% - .5px), rgba(255,255,255,.45) calc(66.66% - .5px), rgba(255,255,255,.45) calc(66.66% + .5px), transparent calc(66.66% + .5px)); }
+.cropbox .h { position: absolute; width: 28px; height: 28px; }
+.cropbox .h::after { content: ""; position: absolute; width: 16px; height: 16px; border: 4px solid #fff; }
+.cropbox .h[data-h="nw"] { left: -6px; top: -6px; cursor: nwse-resize; }
+.cropbox .h[data-h="nw"]::after { left: 2px; top: 2px; border-right: 0; border-bottom: 0; }
+.cropbox .h[data-h="ne"] { right: -6px; top: -6px; cursor: nesw-resize; }
+.cropbox .h[data-h="ne"]::after { right: 2px; top: 2px; border-left: 0; border-bottom: 0; }
+.cropbox .h[data-h="sw"] { left: -6px; bottom: -6px; cursor: nesw-resize; }
+.cropbox .h[data-h="sw"]::after { left: 2px; bottom: 2px; border-right: 0; border-top: 0; }
+.cropbox .h[data-h="se"] { right: -6px; bottom: -6px; cursor: nwse-resize; }
+.cropbox .h[data-h="se"]::after { right: 2px; bottom: 2px; border-left: 0; border-top: 0; }
+.croptools { display: grid; gap: 10px; justify-items: center; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); background: #1b1b1b; }
+.croptools .chipbtn { background: #2a2a2a; border-color: #444; color: #eee; }
+.croptools .seg { width: 100%; max-width: 420px; margin: 0; background: #2a2a2a; border-color: #444; }
+.croptools .seg button { color: #eee; }
+.croptools .seg button + button { border-color: #444; }
+.croptools .seg button.active { background: #eee; color: #111; }

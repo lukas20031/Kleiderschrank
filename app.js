@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '1.3.3';
+const APP_VERSION = '1.4.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -516,12 +516,164 @@ function toJpeg(src, max, q) {
   ctx.drawImage(src, 0, 0, c.width, c.height);
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('Bild konnte nicht umgewandelt werden'))), 'image/jpeg', q));
 }
-async function processImage(file) {
+/** Bild (Datei/Blob) in eine Arbeitsfläche laden, höchstens 3200 px Kantenlänge */
+async function fileToCanvas(file) {
   const bmp = await loadBitmap(file);
-  const full = await toJpeg(bmp, 1600, 0.85);
-  const thumb = await toJpeg(bmp, 480, 0.78);
+  const s = Math.min(1, 3200 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
   bmp.close?.();
-  return { full, thumb };
+  return c;
+}
+async function canvasToPhoto(canvas) {
+  return { full: await toJpeg(canvas, 1600, 0.85), thumb: await toJpeg(canvas, 480, 0.78) };
+}
+
+/* ---------------- Foto drehen / zuschneiden ---------------- */
+const Crop = {
+  src: null, rect: null, ratio: null, scale: 1, drag: null, resolve: null,
+
+  /** Öffnet den Editor. Ergebnis: { canvas } | { canvas, skipRest } | null (verworfen) */
+  edit(canvas, title, moreLeft = false) {
+    this.src = canvas;
+    this.orig = canvas;
+    this.ratio = null;
+    for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === '');
+    $('#cropTitle').textContent = title;
+    $('#cropSkipRest').hidden = !moreLeft;
+    this.resetRect();
+    $('#cropDlg').showModal();
+    this.layout();
+    return new Promise((res) => { this.resolve = res; });
+  },
+  finish(result) {
+    const r = this.resolve;
+    this.resolve = null;
+    $('#cropDlg').close();
+    r?.(result);
+  },
+  resetRect() {
+    const W = this.src.width, H = this.src.height;
+    if (!this.ratio) { this.rect = { x: 0, y: 0, w: W, h: H }; return; }
+    let w = W, h = W / this.ratio;
+    if (h > H) { h = H; w = H * this.ratio; }
+    this.rect = { x: (W - w) / 2, y: (H - h) / 2, w, h };
+  },
+  layout() {
+    const stage = $('#cropStage');
+    const maxW = stage.clientWidth - 32, maxH = stage.clientHeight - 32;
+    const W = this.src.width, H = this.src.height;
+    this.scale = Math.min(maxW / W, maxH / H);
+    const cw = Math.round(W * this.scale), ch = Math.round(H * this.scale);
+    const dpr = window.devicePixelRatio || 1;
+    const cv = $('#cropCanvas');
+    cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+    cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
+    cv.getContext('2d').drawImage(this.src, 0, 0, cv.width, cv.height);
+    this.drawBox();
+  },
+  drawBox() {
+    const b = $('#cropBox').style, r = this.rect, s = this.scale;
+    b.left = r.x * s + 'px'; b.top = r.y * s + 'px'; b.width = r.w * s + 'px'; b.height = r.h * s + 'px';
+  },
+  rotate(dir) {
+    const o = this.src;
+    const c = document.createElement('canvas');
+    c.width = o.height; c.height = o.width;
+    const ctx = c.getContext('2d');
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate(dir * Math.PI / 2);
+    ctx.drawImage(o, -o.width / 2, -o.height / 2);
+    this.src = c;
+    this.resetRect();
+    this.layout();
+  },
+  setRatio(r) {
+    this.ratio = r || null;
+    for (const b of $('#cropRatio').children) b.classList.toggle('active', b.dataset.r === (r ? String(r) : ''));
+    this.resetRect();
+    this.drawBox();
+  },
+  result() {
+    const r = this.rect;
+    const x = Math.round(r.x), y = Math.round(r.y), w = Math.round(r.w), h = Math.round(r.h);
+    if (x === 0 && y === 0 && w === this.src.width && h === this.src.height) return this.src;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(this.src, x, y, w, h, 0, 0, w, h);
+    return c;
+  },
+  // Ziehen: Rahmen verschieben oder an einer Ecke größer/kleiner ziehen
+  down(e) {
+    const h = e.target.dataset.h || (e.target.closest('#cropBox') ? 'move' : null);
+    if (!h) return;
+    e.preventDefault();
+    e.target.setPointerCapture?.(e.pointerId);
+    this.drag = { h, px: e.clientX, py: e.clientY, r: { ...this.rect } };
+  },
+  move(e) {
+    const d = this.drag;
+    if (!d) return;
+    const W = this.src.width, H = this.src.height, s = this.scale;
+    const dx = (e.clientX - d.px) / s, dy = (e.clientY - d.py) / s;
+    const r0 = d.r, min = 48 / s;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    if (d.h === 'move') {
+      this.rect = { ...r0, x: clamp(r0.x + dx, 0, W - r0.w), y: clamp(r0.y + dy, 0, H - r0.h) };
+    } else {
+      const west = d.h.includes('w'), north = d.h.includes('n');
+      const ax = west ? r0.x + r0.w : r0.x, ay = north ? r0.y + r0.h : r0.y;   // feste Gegenecke
+      let tx = (west ? r0.x : r0.x + r0.w) + dx, ty = (north ? r0.y : r0.y + r0.h) + dy;
+      tx = west ? clamp(tx, 0, ax - min) : clamp(tx, ax + min, W);
+      ty = north ? clamp(ty, 0, ay - min) : clamp(ty, ay + min, H);
+      let w = Math.abs(tx - ax), h = Math.abs(ty - ay);
+      if (this.ratio) { if (w / h > this.ratio) w = h * this.ratio; else h = w / this.ratio; }
+      this.rect = { x: west ? ax - w : ax, y: north ? ay - h : ay, w, h };
+    }
+    this.drawBox();
+  },
+  up() { this.drag = null; },
+};
+
+/** Fotos nacheinander im Editor öffnen und übernehmen */
+async function addPhotos(files) {
+  for (let i = 0; i < files.length; i++) {
+    try {
+      let canvas = await fileToCanvas(files[i]);
+      if (!skipEditing) {
+        const res = await Crop.edit(canvas, files.length > 1 ? `Foto ${i + 1} von ${files.length}` : 'Foto bearbeiten', i < files.length - 1);
+        if (!res) continue; // verworfen
+        canvas = res.canvas;
+        if (res.skipRest) skipEditing = true;
+      }
+      const { full, thumb } = await canvasToPhoto(canvas);
+      ed.photos.push({ id: uid(), isNew: true, full, thumb, url: URL.createObjectURL(thumb) });
+      renderPhotoStrip();
+    } catch (e) {
+      toast('Foto konnte nicht gelesen werden: ' + e.message);
+    }
+  }
+  skipEditing = false;
+}
+let skipEditing = false;
+
+/** Vorhandenes Foto im Editor erneut drehen/zuschneiden */
+async function reEditPhoto(idx) {
+  const p = ed.photos[idx];
+  let blob = p.isNew ? p.full : (photoMap.get(p.id)?.full || null);
+  if (!blob && !p.isNew) {
+    const u = await fullUrl(p.id);
+    if (u) blob = await (await fetch(u)).blob();
+  }
+  if (!blob) return toast('Das Foto ist gerade nicht verfügbar.');
+  const res = await Crop.edit(await fileToCanvas(blob), 'Foto bearbeiten');
+  if (!res) return;
+  const { full, thumb } = await canvasToPhoto(res.canvas);
+  if (p.isNew) URL.revokeObjectURL(p.url); else ed.removed.push(p.id);
+  // Bearbeitetes Foto ersetzt das alte an derselben Stelle
+  ed.photos[idx] = { id: uid(), isNew: true, full, thumb, url: URL.createObjectURL(thumb) };
+  renderPhotoStrip();
 }
 
 /* ---------------- Synchronisation ---------------- */
@@ -957,18 +1109,6 @@ function openEditor(id = null) {
   $('#editor').showModal();
 }
 
-async function addPhotos(files) {
-  for (const file of files) {
-    try {
-      const { full, thumb } = await processImage(file);
-      ed.photos.push({ id: uid(), isNew: true, full, thumb, url: URL.createObjectURL(thumb) });
-      renderPhotoStrip();
-    } catch (e) {
-      toast('Foto konnte nicht gelesen werden: ' + e.message);
-    }
-  }
-}
-
 async function saveEditor() {
   const form = $('#editForm');
   const now = new Date().toISOString();
@@ -1251,6 +1391,26 @@ function wireEvents() {
   $('#editor').addEventListener('close', () => {
     if (ed) { for (const p of ed.photos) if (p.isNew) URL.revokeObjectURL(p.url); ed = null; }
   });
+  $('#cameraInput').addEventListener('change', async (e) => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    await addPhotos(files);
+  });
+  // Foto-Editor
+  $('#cropOk').addEventListener('click', () => Crop.finish({ canvas: Crop.result() }));
+  $('#cropSkipRest').addEventListener('click', () => Crop.finish({ canvas: Crop.result(), skipRest: true }));
+  $('#cropCancel').addEventListener('click', () => Crop.finish(null));
+  $('#cropDlg').addEventListener('cancel', (e) => { e.preventDefault(); Crop.finish(null); });
+  $('#rotL').addEventListener('click', () => Crop.rotate(-1));
+  $('#rotR').addEventListener('click', () => Crop.rotate(1));
+  $('#cropReset').addEventListener('click', () => { Crop.src = Crop.orig; Crop.setRatio(null); Crop.layout(); });
+  $('#cropRatio').addEventListener('click', (e) => { const b = e.target.closest('[data-r]'); if (b) Crop.setRatio(Number(b.dataset.r) || null); });
+  $('#cropWrap').addEventListener('pointerdown', (e) => Crop.down(e));
+  window.addEventListener('pointermove', (e) => Crop.move(e));
+  window.addEventListener('pointerup', () => Crop.up());
+  window.addEventListener('pointercancel', () => Crop.up());
+  window.addEventListener('resize', () => { if ($('#cropDlg').open) Crop.layout(); });
+
   $('#photoInput').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
@@ -1291,6 +1451,10 @@ function wireEvents() {
     $('#photoCover').hidden = photoIdx === 0;
     $('#photoDlg').showModal();
     if (!p.isNew) { const u = await fullUrl(p.id); if (u) $('#photoBig').src = u; }
+  });
+  $('#photoEdit').addEventListener('click', async () => {
+    $('#photoDlg').close();
+    await reEditPhoto(photoIdx);
   });
   $('#photoCover').addEventListener('click', () => {
     const [p] = ed.photos.splice(photoIdx, 1);

@@ -60,11 +60,19 @@
     </header>
     <div class="sheetbody">
       <div id="photoStrip" class="photostrip"></div>
-      <label class="addphoto">
-        <input id="photoInput" type="file" accept="image/*" multiple hidden>
-        <span>+ Fotos hinzufügen</span>
-      </label>
-      <p class="hint">Erstes Foto = Titelbild. Tippe ein Foto an, um es zum Titelbild zu machen oder zu löschen.</p>
+      <div class="addrow">
+        <label class="addphoto">
+          <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span>Foto aufnehmen</span>
+        </label>
+        <label class="addphoto">
+          <input id="photoInput" type="file" accept="image/*" multiple hidden>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <span>Aus Galerie</span>
+        </label>
+      </div>
+      <p class="hint">Erstes Foto = Titelbild. Tippe ein Foto an, um es zu drehen, zuzuschneiden, zum Titelbild zu machen oder zu löschen.</p>
 
       <label class="field">Bezeichnung (optional)
         <input name="bezeichnung" placeholder="optional – sonst wird die Kategorie angezeigt" autocomplete="off">
@@ -119,9 +127,42 @@
 <dialog id="photoDlg" class="photodlg">
   <img id="photoBig" alt="">
   <div class="photoacts">
+    <button type="button" id="photoEdit" class="chipbtn">Drehen / Zuschneiden</button>
     <button type="button" id="photoCover" class="chipbtn">Als Titelbild</button>
     <button type="button" id="photoDelete" class="chipbtn dangerchip">Foto löschen</button>
     <button type="button" class="chipbtn" data-close>Schließen</button>
+  </div>
+</dialog>
+
+<!-- Foto drehen / zuschneiden -->
+<dialog id="cropDlg" class="cropdlg">
+  <header class="sheethead">
+    <button type="button" class="textbtn" id="cropCancel">Verwerfen</button>
+    <h2 id="cropTitle">Foto bearbeiten</h2>
+    <button type="button" class="textbtn strong" id="cropOk">Übernehmen</button>
+  </header>
+  <div class="cropstage" id="cropStage">
+    <div class="cropwrap" id="cropWrap">
+      <canvas id="cropCanvas"></canvas>
+      <div class="cropbox" id="cropBox">
+        <span class="grid"></span>
+        <span class="h" data-h="nw"></span><span class="h" data-h="ne"></span><span class="h" data-h="sw"></span><span class="h" data-h="se"></span>
+      </div>
+    </div>
+  </div>
+  <div class="croptools">
+    <div class="row">
+      <button type="button" class="chipbtn" id="rotL" aria-label="Nach links drehen">⟲ Links</button>
+      <button type="button" class="chipbtn" id="rotR" aria-label="Nach rechts drehen">Rechts ⟳</button>
+      <button type="button" class="chipbtn" id="cropReset">Zurücksetzen</button>
+    </div>
+    <div class="seg" id="cropRatio">
+      <button type="button" data-r="" class="active">Frei</button>
+      <button type="button" data-r="0.75">3:4</button>
+      <button type="button" data-r="1">1:1</button>
+      <button type="button" data-r="1.3333">4:3</button>
+    </div>
+    <button type="button" class="textbtn" id="cropSkipRest" hidden>Restliche Fotos unverändert übernehmen</button>
   </div>
 </dialog>
 
