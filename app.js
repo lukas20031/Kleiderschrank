@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.9.2';
+const APP_VERSION = '2.9.4';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -19,6 +19,7 @@ const FIELDS = [
   { key: 'farben', label: 'Farbe', type: 'multi', options: FARBEN.map((f) => f[0]), swatch: true, wide: true },
   { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true },
   { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
+  { key: 'passform', label: 'Passform', type: 'chips', options: ['Zu klein', 'Eng', 'Passend', 'Locker', 'Zu groß'], wide: true },
   { key: 'marke', label: 'Marke', type: 'text', defaults: [], wide: true },
   { key: 'preis', label: 'Preis', type: 'price', wide: true, noFilter: true },
   { key: 'kaufdatum', label: 'Kaufdatum', type: 'date', wide: true, noFilter: true },
@@ -1571,7 +1572,7 @@ function renderFilters() {
 
 /** Teile nach Suchtext, Filtern und Sortierung */
 /** Ohne Angabe bei Anlass/Jahreszeit passt ein Eintrag zu jedem Filterwert */
-const OPEN_KEYS = ['anlass', 'jahreszeit'];
+const OPEN_KEYS = ['anlass', 'jahreszeit', 'passform'];
 /** Passt ein Teil zu allen Filtern (optional ohne einen bestimmten, für die Auswahlmöglichkeiten)? */
 function matchFilters(it, fState, skip = null) {
   if (!matchSpecial(it, skip && SPECIAL_KEYS.includes(skip) ? { ...fState, [skip]: '' } : fState)) return false;
@@ -2929,6 +2930,7 @@ function setWxLoc(loc) {
   localStorage.setItem('ks_wxloc', JSON.stringify(loc));
   wx.edit = false; wx.results = null;
   loadWeather(true);
+  nameGpsLoc();
 }
 /** Aktuellen Standort holen; silent = nur wenn die Berechtigung schon erteilt ist (keine Nachfrage) */
 async function useGps(silent = false) {
@@ -2943,6 +2945,28 @@ async function useGps(silent = false) {
   }, () => {
     if (!silent) toast('Standort nicht verfügbar oder nicht erlaubt – du kannst stattdessen einen Ort eingeben.');
   }, { maximumAge: 30 * 60 * 1000, timeout: 15000 });
+}
+/** Ortsname zu Koordinaten (ohne Konto): BigDataCloud, ersatzweise OpenStreetMap/Nominatim */
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=de`);
+    if (r.ok) { const j = await r.json(); const n = j.city || j.locality || j.principalSubdivision; if (n) return n; }
+  } catch { /* nächster Dienst */ }
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&accept-language=de`);
+    if (r.ok) { const a = (await r.json()).address || {}; const n = a.city || a.town || a.village || a.municipality || a.county; if (n) return n; }
+  } catch { /* egal */ }
+  return '';
+}
+/** Für einen per GPS ermittelten Standort den Ortsnamen nachtragen */
+async function nameGpsLoc() {
+  const loc = wxLoc;
+  if (!loc || loc.mode !== 'gps' || loc.named || !navigator.onLine) return;
+  const n = await reverseGeocode(loc.lat, loc.lon);
+  if (!n || wxLoc !== loc) return;
+  wxLoc = { ...loc, name: n, named: true };
+  localStorage.setItem('ks_wxloc', JSON.stringify(wxLoc));
+  refreshWeatherViews();
 }
 async function searchPlace(q) {
   q = q.trim();
@@ -2970,7 +2994,8 @@ function weatherCardInner() {
       ${res}`;
   }
   const w = wxDay(isoDay());
-  const place = `<button type="button" class="wxplace" data-wx-edit title="Ort ändern">📍 ${esc(wxLoc.name)} · ändern</button>`;
+  const placeName = wxLoc.mode === 'gps' ? (wxLoc.named ? `${wxLoc.name} (aktueller Standort)` : 'Aktueller Standort') : wxLoc.name;
+  const place = `<button type="button" class="wxplace" data-wx-edit title="Ort ändern">📍 ${esc(placeName)} · ändern</button>`;
   if (!w) {
     const msg = wx.loading ? 'Wetter wird geladen …' : wx.error === 'offline' ? 'Offline – kein Wetter verfügbar.' : wx.error ? 'Wetter gerade nicht verfügbar.' : 'Wetter wird geladen …';
     return `<div class="wxnow"><span class="wxico">🌡️</span><div><b>Heute</b><p class="muted">${msg}</p>${place}</div></div>`;
@@ -3003,7 +3028,7 @@ function wireWeather() {
   window.addEventListener('online', () => { if (tab === 'plan') loadWeather(); });
 }
 function weatherOnPlan() {
-  if (wxLoc?.mode === 'gps' && !wx.gpsChecked) { wx.gpsChecked = true; useGps(true); }
+  if (wxLoc?.mode === 'gps' && !wx.gpsChecked) { wx.gpsChecked = true; useGps(true); nameGpsLoc(); }
   loadWeather();
 }
 
