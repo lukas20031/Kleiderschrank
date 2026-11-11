@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.12.0';
+const APP_VERSION = '2.12.2';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1831,10 +1831,18 @@ function filterSelectsHtml(fState, withStatus = true, base = items) {
     if (cur && cur !== CAT_NONE && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
     const none = f.key === 'kategorie' ? pool.filter((i) => !i.kategorie).length : 0;
     if (f.swatch) {
-      // Farben als Knöpfe mit Farbkreis, die häufigste zuerst
-      vals.sort((a, b) => b[1] - a[1] || (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9));
-      return `<div class="fchips"><span>${esc(f.label)}</span><div>${vals.map(([v, n]) =>
-        `<button type="button" class="chipbtn${v === cur ? ' active' : ''}" data-fchip="${f.key}" data-val="${esc(v)}" aria-pressed="${v === cur}">${swatch(v)}${esc(v)} <small>${n}</small></button>`).join('') || '<small class="muted">keine</small>'}</div></div>`;
+      // Farben: aufklappbare Liste mit Farbkreisen und Mehrfachauswahl, die häufigste zuerst
+      const sel = asList(fState[f.key]);
+      const list = [...vals.filter(([v]) => v !== cur)];
+      for (const v of sel) if (!list.some(([x]) => x === v)) list.push([v, 0]);
+      list.sort((a, b) => b[1] - a[1] || (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9));
+      const open = openDrop === f.key;
+      const summary = sel.length ? `<span class="dots">${sel.map(swatch).join('')}</span>${esc(sel.join(', '))}` : 'Alle';
+      return `<div class="fdrop${open ? ' open' : ''}"><span class="flabel">${esc(f.label)}</span>
+        <button type="button" class="fdropbtn" data-fdrop="${f.key}" aria-expanded="${open}">${summary}</button>
+        ${open ? `<div class="fdroplist">${list.map(([v, n]) => `<button type="button" class="frow${sel.includes(v) ? ' on' : ''}" data-fchip="${f.key}" data-val="${esc(v)}" aria-pressed="${sel.includes(v)}">
+          <span class="fcheck"></span>${swatch(v)}<span class="fname">${esc(v)}</span><small>${n}</small></button>`).join('') || '<p class="muted">Keine Farben</p>'}
+          ${sel.length ? `<button type="button" class="frow fclear" data-fchip-clear="${f.key}">Auswahl aufheben</button>` : ''}</div>` : ''}</div>`;
     }
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')
@@ -1844,7 +1852,8 @@ function filterSelectsHtml(fState, withStatus = true, base = items) {
 }
 /** Filterwert ändern; übergeordnete Kategorie setzt Unterkategorie/Art zurück */
 function setFilter(fState, k, v) {
-  fState[k] = v;
+  if (Array.isArray(v) && !v.length) v = '';
+  if (v === '' || v === undefined) delete fState[k]; else fState[k] = v;
   if (k === 'kategorie') { delete fState.unterkategorie; delete fState.typ; }
   if (k === 'unterkategorie') delete fState.typ;
 }
@@ -1867,10 +1876,29 @@ function matchFilters(it, fState, skip = null) {
     if (v === CAT_NONE) { if (it[k]) return false; continue; }
     const vals = fieldValues(it, k);
     if (OPEN_KEYS.includes(k) && !vals.length) continue;
+    // Mehrfachauswahl (Farben): passt, wenn das Teil mindestens eine der gewählten Farben hat
+    if (Array.isArray(v)) { if (v.length && !v.some((x) => vals.includes(x))) return false; continue; }
     if (!vals.includes(v)) return false;
   }
   return true;
 }
+/** Klicks in der Farbliste: auf-/zuklappen, Farbe an/aus, Auswahl aufheben. true = Filter neu zeichnen */
+function onFilterDrop(e, st) {
+  const t = e.target;
+  const d = t.closest('[data-fdrop]');
+  if (d) { openDrop = openDrop === d.dataset.fdrop ? null : d.dataset.fdrop; return true; }
+  const fc = t.closest('[data-fchip]');
+  if (fc) {
+    const k = fc.dataset.fchip, v = fc.dataset.val, cur = asList(st[k]);
+    setFilter(st, k, cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]);
+    return true;
+  }
+  const cl = t.closest('[data-fchip-clear]');
+  if (cl) { setFilter(st, cl.dataset.fchipClear, ''); return true; }
+  return false;
+}
+const asList = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+let openDrop = null; // aufgeklappte Farbliste im Filter
 function filterItems(query, fState, sort = 'new', pool = items) {
   const q = String(query || '').trim().toLowerCase();
   const terms = q ? q.split(/\s+/) : [];
@@ -3825,8 +3853,7 @@ function wireEvents() {
     renderPicker();
   });
   $('#pickFilters').addEventListener('click', (e) => {
-    const fc = e.target.closest('[data-fchip]');
-    if (fc) { setFilter(pick.filters, fc.dataset.fchip, pick.filters[fc.dataset.fchip] === fc.dataset.val ? '' : fc.dataset.val); return renderPicker(); }
+    if (onFilterDrop(e, pick.filters)) return renderPicker();
     if (!e.target.closest('[data-reset-filters]')) return;
     pick.filters = {};
     renderPicker();
@@ -3853,7 +3880,13 @@ function wireEvents() {
     render();
   });
   $('#sort').addEventListener('change', () => { localStorage.setItem(sortKey(tab), $('#sort').value); render(); });
-  $('#filterToggle').addEventListener('click', () => { $('#filters').hidden = !$('#filters').hidden; });
+  $('#filterToggle').addEventListener('click', () => { $('#filters').hidden = !$('#filters').hidden; openDrop = null; render(); });
+  document.addEventListener('click', (e) => {
+    if (!openDrop || e.target.closest('.fdrop')) return;
+    openDrop = null;
+    if (!$('#filters').hidden) render();
+    if ($('#pickDlg').open) renderPicker();
+  });
   $('#filters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
     if (!k) return;
@@ -3868,12 +3901,9 @@ function wireEvents() {
     render();
   });
   $('#filters').addEventListener('click', (e) => {
-    const fc = e.target.closest('[data-fchip]');
-    if (fc && tab !== 'outfits') {
+    if (tab !== 'outfits') {
       const [st, key] = tab === 'wish' ? [wishFilters, 'ks_wfilters'] : [filters, 'ks_filters'];
-      setFilter(st, fc.dataset.fchip, st[fc.dataset.fchip] === fc.dataset.val ? '' : fc.dataset.val); // nochmal tippen = abwählen
-      localStorage.setItem(key, JSON.stringify(st));
-      return render();
+      if (onFilterDrop(e, st)) { localStorage.setItem(key, JSON.stringify(st)); return render(); }
     }
     if (!e.target.closest('[data-reset-filters]')) return;
     if (tab === 'outfits') {
