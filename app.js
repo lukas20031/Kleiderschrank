@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.11.2';
+const APP_VERSION = '2.11.3';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1185,6 +1185,14 @@ const Crop = {
     const maxH = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     if (maxW <= 0 || maxH <= 0) return;
     const z = keepZoom ? this.zoom : 1;
+    // Gezoomt: Bildpunkt in der Mitte der Bühne merken, damit er nach dem Neueinpassen wieder dort liegt
+    const center = (el) => { const b = el.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; };
+    let focus = null;
+    if (keepZoom && z > 1 && this.cw) {
+      const sc = center(stage), r = $('#cropWrap').getBoundingClientRect();
+      const ox = r.left - this.tx, oy = r.top - this.ty;
+      focus = { x: (sc.x - ox - this.tx) / z / this.scale, y: (sc.y - oy - this.ty) / z / this.scale };
+    }
     const W = this.base.width, H = this.base.height;
     this.scale = Math.min(maxW / W, maxH / H);
     const cw = Math.round(W * this.scale), ch = Math.round(H * this.scale);
@@ -1194,7 +1202,12 @@ const Crop = {
     cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
     this.cw = cw; this.ch = ch;
     this.zoom = 1; this.tx = 0; this.ty = 0;
-    this.setZoom(z);
+    $('#cropWrap').style.transform = '';
+    if (focus) {
+      const sc = center(stage), r = $('#cropWrap').getBoundingClientRect();
+      this.zoom = Math.max(1, Math.min(8, z));
+      this.pan(sc.x - r.left - this.zoom * focus.x * this.scale, sc.y - r.top - this.zoom * focus.y * this.scale);
+    } else this.setZoom(z);
     this.redraw();
     this.drawBox();
   },
