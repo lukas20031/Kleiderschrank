@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.6.1';
+const APP_VERSION = '2.7.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1636,9 +1636,37 @@ function sortOutfits(list, sort) {
 }
 function filteredItems() { return filterItems($('#search').value, filters, $('#sort').value); }
 
+/* Welches Bild zeigen die Kacheln? Teile: Titelbild oder erstes Foto mit Tag; Outfits: Outfitfoto oder Collage */
+let itemView = localStorage.getItem('ks_itemview') || '';
+let outfitView = localStorage.getItem('ks_outfitview') || '';
+/** Foto passend zum gewählten Tag, sonst das Titelbild */
+function viewPhoto(it) {
+  const ps = it.photos || [];
+  if (itemView) { const hit = ps.find((pid) => ((it.photoTags || {})[pid] || []).includes(itemView)); if (hit) return hit; }
+  return ps[0];
+}
+function renderViewChips() {
+  const box = $('#viewChips');
+  let opts = [];
+  let cur = '';
+  if (tab === 'outfits') {
+    if (outfits.some((o) => (o.photos || []).length)) opts = [['', 'Outfitfoto'], ['collage', 'Collage']];
+    cur = outfitView;
+  } else if (tab === 'items' || tab === 'wish') {
+    const used = new Set((tab === 'wish' ? wishes : items).flatMap((it) => Object.values(it.photoTags || {}).flat()));
+    const tags = allPhotoTags().filter((t) => used.has(t));
+    if (tags.length) opts = [['', 'Titelbild'], ...tags.map((t) => [t, t])];
+    cur = itemView;
+    if (cur && !tags.includes(cur)) opts.push([cur, cur]);
+  }
+  box.hidden = !opts.length;
+  box.innerHTML = opts.length ? `<span class="vlabel">Bild:</span>${opts.map(([v, l]) =>
+    `<button type="button" class="chipbtn${v === cur ? ' active' : ''}" data-view="${esc(v)}">${esc(l)}</button>`).join('')}` : '';
+}
+
 /** Karte eines Teils (Übersicht, Teile-Auswahl, Outfit-Detail) */
 function itemCardHtml(it, { selected = null } = {}) {
-  const pid = (it.photos || [])[0];
+  const pid = selected === null ? viewPhoto(it) : (it.photos || [])[0];
   const url = pid ? thumbUrl(pid) : '';
   // Ohne Bezeichnung steht die Kategorie schon im Titel – dann Marke statt Kategorie zeigen
   const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse, it.wunsch ? formatPrice(it.preis) : ''].filter(Boolean).join(' · ');
@@ -1663,9 +1691,11 @@ function render() {
   $('#statsView').hidden = tab !== 'stats';
   if (tab === 'plan' || tab === 'stats') {
     $('#grid').innerHTML = ''; $('#count').textContent = ''; $('#empty').hidden = true; $('#emptyOutfits').hidden = true; $('#emptyWish').hidden = true;
+    $('#viewChips').hidden = true;
     return tab === 'plan' ? renderPlan() : renderStats();
   }
   renderSortOptions();
+  renderViewChips();
   if (tab === 'outfits') return renderOutfits();
   if (tab === 'wish') return renderWishes();
   $('#emptyWish').hidden = true;
@@ -1786,10 +1816,11 @@ function renderOutfits() {
 }
 function outfitCardHtml(o) {
   const its = outfitItems(o);
+  const useCollage = outfitView === 'collage';
   const wash = its.filter((it) => it.waesche).length;
   const sub = [`${its.length} ${its.length === 1 ? 'Teil' : 'Teile'}`, wash ? `${wash} in der Wäsche` : '', ...(o.anlass || []).slice(0, 2)].filter(Boolean);
   return `<button type="button" class="card outfit" data-outfit="${esc(o.id)}">
-      ${collageHtml(o)}
+      ${collageHtml(o, false, !useCollage)}
       ${o._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
       <div class="info"><div class="title${o.name ? '' : ' auto'}">${o.favorit ? '<span class="fav" title="Favorit">♥</span> ' : ''}${esc(outfitTitle(o))}</div><div class="sub">${esc(sub.join(' · '))}</div></div>
     </button>`;
@@ -2612,6 +2643,7 @@ function itemRowsHtml(list, right) {
     <span class="othumb">${photoCell(it)}</span><span><b>${esc(itemTitle(it))}</b><small>${esc(right(it))}</small></span></button>`).join('')}</div>`;
 }
 let statsCpwLow = localStorage.getItem('ks_cpw') === 'low';
+let statsWornLow = localStorage.getItem('ks_worn') === 'low';
 function renderStats() {
   const act = items.filter((it) => !it.status);
   if (!items.length) { $('#statsView').innerHTML = '<p class="muted">Noch keine Teile erfasst.</p>'; return; }
@@ -2630,7 +2662,10 @@ function renderStats() {
   const brands = top(count(act, (it) => fieldValues(it, 'marke')));
   const zust = count(act, (it) => fieldValues(it, 'zustand'));
   const zustRows = ZUSTAENDE.filter((z) => zust.get(z)).map((z) => [z, zust.get(z)]);
-  const most = [...act].filter(wornCount).sort((a, b) => wornCount(b) - wornCount(a)).slice(0, 5);
+  const wornLow = statsWornLow;
+  // Seltensten: auch nie Getragene; bei Gleichstand das am längsten nicht Getragene zuerst
+  const most = (wornLow ? [...act].sort((a, b) => wornCount(a) - wornCount(b) || lastWorn(a).localeCompare(lastWorn(b)))
+    : [...act].filter(wornCount).sort((a, b) => wornCount(b) - wornCount(a))).slice(0, 5);
   const never = act.filter((it) => !wornCount(it));
   const long = act.filter((it) => wornCount(it) && daysSince(lastWorn(it)) >= 90).sort((a, b) => lastWorn(a).localeCompare(lastWorn(b))).slice(0, 5);
   const cpwLow = statsCpwLow;
@@ -2651,7 +2686,9 @@ function renderStats() {
     ${colors.length ? `<h3>Farben</h3>${barsHtml(colors)}` : ''}
     ${brands.length ? `<h3>Marken</h3>${barsHtml(brands)}` : ''}
     ${zustRows.length ? `<h3>Zustand</h3>${barsHtml(zustRows)}` : ''}
-    ${most.length ? `<h3>Am häufigsten getragen</h3>${itemRowsHtml(most, (it) => `${wornCount(it)}× · zuletzt ${agoText(lastWorn(it))}`)}` : ''}
+    ${act.length ? `<h3>Getragen</h3>
+      <div class="seg small cpwseg"><button type="button" data-worn="high" class="${wornLow ? '' : 'active'}">Am häufigsten</button><button type="button" data-worn="low" class="${wornLow ? 'active' : ''}">Am seltensten</button></div>
+      ${most.length ? itemRowsHtml(most, (it) => (wornCount(it) ? `${wornCount(it)}× · zuletzt ${agoText(lastWorn(it))}` : 'noch nie getragen')) : '<p class="muted">Noch nichts als getragen eingetragen.</p>'}` : ''}
     ${long.length ? `<div class="sechead"><h3>Lange nicht getragen</h3><button type="button" class="chipbtn" data-goto='{"getragen":"90"}'>Alle anzeigen</button></div>${itemRowsHtml(long, (it) => `zuletzt ${agoText(lastWorn(it))} · ${wornCount(it)}×`)}` : ''}
     ${cpw.length ? `<div class="sechead"><h3>Preis pro Tragen</h3><button type="button" class="chipbtn" data-goto-sort="${cpwLow ? 'cpw_asc' : 'cpw'}">Alle anzeigen</button></div>
       <div class="seg small cpwseg"><button type="button" data-cpw="high" class="${cpwLow ? '' : 'active'}">Höchster</button><button type="button" data-cpw="low" class="${cpwLow ? 'active' : ''}">Niedrigster</button></div>${itemRowsHtml(cpw, (it) => `${formatPrice(costPerWear(it))} pro Tragen · ${formatPrice(it.preis)}, ${wornCount(it)}× getragen`)}` : ''}
@@ -2778,6 +2815,8 @@ function wirePlanner() {
   $('#statsView').addEventListener('click', (e) => {
     const g = e.target.closest('[data-goto]');
     if (g) return gotoItems(JSON.parse(g.dataset.goto));
+    const w = e.target.closest('[data-worn]');
+    if (w) { statsWornLow = w.dataset.worn === 'low'; localStorage.setItem('ks_worn', w.dataset.worn); return renderStats(); }
     const c = e.target.closest('[data-cpw]');
     if (c) { statsCpwLow = c.dataset.cpw === 'low'; localStorage.setItem('ks_cpw', c.dataset.cpw); return renderStats(); }
     const s = e.target.closest('[data-goto-sort]');
@@ -3030,6 +3069,13 @@ function wireEvents() {
     pick.onDone?.(next);
   });
   $('#search').addEventListener('input', render);
+  $('#viewChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-view]');
+    if (!b) return;
+    if (tab === 'outfits') { outfitView = b.dataset.view; localStorage.setItem('ks_outfitview', outfitView); }
+    else { itemView = b.dataset.view; localStorage.setItem('ks_itemview', itemView); }
+    render();
+  });
   $('#sort').addEventListener('change', () => { localStorage.setItem(sortKey(tab), $('#sort').value); render(); });
   $('#filterToggle').addEventListener('click', () => { $('#filters').hidden = !$('#filters').hidden; });
   $('#filters').addEventListener('change', (e) => {

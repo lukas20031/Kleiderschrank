@@ -511,3 +511,9 @@ body[data-tab="wish"] #filterToggle, body[data-tab="wish"] #filters { display: n
 .buybox .hint { display: block; margin-bottom: 0; }
 .tabbar button span { white-space: nowrap; font-size: 11px; }
 .cpwseg { margin-bottom: 8px; }
+
+/* Bildauswahl in der Leiste */
+.viewchips { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding: 2px 16px 8px; scrollbar-width: none; }
+.viewchips::-webkit-scrollbar { display: none; }
+.viewchips .vlabel { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
+.viewchips .chipbtn { flex: 0 0 auto; padding: 4px 11px; font-size: 13px; }
