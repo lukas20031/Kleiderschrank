@@ -35,8 +35,9 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
+.appbar { position: sticky; top: 0; z-index: 5; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
+.appbar .filters { max-height: 45vh; overflow-y: auto; padding-bottom: 10px; }
 .topbar {
-  position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: 10px;
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
   background: var(--brand); color: var(--brand-ink);
@@ -63,10 +64,10 @@ button { cursor: pointer; }
 
 .toolbar { display: flex; gap: 8px; padding: 12px 16px 6px; }
 .toolbar input[type=search] {
-  flex: 1; min-width: 0; padding: 9px 12px;
+  flex: 1 1 120px; min-width: 100px; padding: 9px 12px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--card);
 }
-.toolbar select { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 0 8px; }
+.toolbar select { flex: 0 1 auto; min-width: 0; max-width: 40%; text-overflow: ellipsis; border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 0 8px; }
 
 .chipbtn {
   border: 1px solid var(--line); background: var(--card); border-radius: 999px;
@@ -325,12 +326,11 @@ body { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
 .tabbar button.active { color: var(--brand); font-weight: 650; }
 @media (prefers-color-scheme: dark) { .tabbar button.active { color: #8fd0c6; } }
 .fab { bottom: calc(76px + env(safe-area-inset-bottom)); }
-body[data-tab="outfits"] #sort { display: none !important; }
 #outfitDetailMeta { margin: 0 0 12px; }
 .toast { bottom: calc(150px + env(safe-area-inset-bottom)); }
 
 /* Outfit-Karten mit Collage */
-.collage { aspect-ratio: 3/4; display: grid; gap: 2px; background: var(--card); }
+.collage { aspect-ratio: 3/4; overflow: hidden; min-height: 0; display: grid; gap: 2px; background: var(--card); }
 .collage img, .collage .ph { width: 100%; height: 100%; object-fit: cover; background: var(--line); display: block; min-height: 0; }
 .collage .ph { display: grid; place-items: center; color: var(--muted); }
 .collage img.cut { padding: 4px; }
@@ -491,8 +491,8 @@ button.orow { grid-template-columns: 52px 1fr; }
 .gallery figcaption { position: absolute; left: 10px; bottom: 10px; font-size: 13px; background: rgba(0,0,0,.6); color: #fff; padding: 2px 10px; border-radius: 999px; }
 #outfitDetailPhotos { margin-bottom: 14px; }
 /* Outfit mit eigenem Foto */
-.collage.cover { display: block; background: var(--line); }
-.collage.cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.collage.cover { display: block; position: relative; background: var(--line); }
+.collage.cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .collage.cover img.cut { object-fit: contain; }
 .phototagbox .row input { width: auto; }
 .phototagbox .row button { flex: 0 0 auto; }

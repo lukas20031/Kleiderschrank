@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.4.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1580,8 +1580,50 @@ function filterItems(query, fState, sort = 'new') {
   else if (sort === 'worn_old') list.sort((a, b) => lastWorn(a).localeCompare(lastWorn(b)) || cmp(a, b, 'name'));
   else if (sort === 'worn_most') list.sort((a, b) => wornCount(b) - wornCount(a) || cmp(a, b, 'name'));
   else if (sort === 'cpw') list.sort((a, b) => (costPerWear(b) ?? -1) - (costPerWear(a) ?? -1) || cmp(a, b, 'name'));
+  else if (sort === 'price_desc' || sort === 'price_asc') list.sort((a, b) => byPrice(itemPrice(a), itemPrice(b), sort) || cmp(a, b, 'name'));
   else list.sort((a, b) => cmp(a, b, sort));
   return list;
+}
+const itemPrice = (it) => (hasValue(it.preis) ? Number(it.preis) : null);
+/** Outfit-Preis = Summe der Teile mit Preis; ohne Preise null */
+function outfitPrice(o) {
+  const ps = outfitItems(o).map(itemPrice).filter((v) => v !== null);
+  return ps.length ? ps.reduce((x, y) => x + y, 0) : null;
+}
+/** Nach Preis sortieren; Einträge ohne Preis immer ans Ende */
+function byPrice(a, b, sort) {
+  if (a === null || b === null) return (a === null) - (b === null);
+  return sort === 'price_asc' ? a - b : b - a;
+}
+const SORTS = {
+  items: [['new', 'Neueste'], ['name', 'Name'], ['kategorie', 'Kategorie'], ['lagerort', 'Lagerort'], ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch'],
+    ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'], ['cpw', 'Preis pro Tragen']],
+  outfits: [['new', 'Neueste'], ['name', 'Name'], ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'],
+    ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch']],
+};
+const sortKey = (t) => (t === 'outfits' ? 'ks_osort' : 'ks_sort');
+/** Sortier-Auswahl passend zum Tab (Teile/Outfits haben eigene Sortierung) */
+function renderSortOptions() {
+  const t = tab === 'outfits' ? 'outfits' : 'items';
+  const sel = $('#sort');
+  if (sel.dataset.for === t) return;
+  sel.dataset.for = t;
+  const saved = localStorage.getItem(sortKey(t));
+  sel.innerHTML = SORTS[t].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+  sel.value = SORTS[t].some(([v]) => v === saved) ? saved : 'new';
+}
+function sortOutfits(list, sort) {
+  const name = (a, b) => outfitTitle(a).localeCompare(outfitTitle(b), 'de');
+  const by = {
+    new: (a, b) => String(b.createdAt).localeCompare(String(a.createdAt)),
+    name,
+    worn_recent: (a, b) => lastWorn(b).localeCompare(lastWorn(a)) || name(a, b),
+    worn_old: (a, b) => lastWorn(a).localeCompare(lastWorn(b)) || name(a, b),
+    worn_most: (a, b) => wornCount(b) - wornCount(a) || name(a, b),
+    price_desc: (a, b) => byPrice(outfitPrice(a), outfitPrice(b), 'price_desc') || name(a, b),
+    price_asc: (a, b) => byPrice(outfitPrice(a), outfitPrice(b), 'price_asc') || name(a, b),
+  };
+  return list.sort(by[sort] || by.new);
 }
 function filteredItems() { return filterItems($('#search').value, filters, $('#sort').value); }
 
@@ -1614,6 +1656,7 @@ function render() {
     $('#grid').innerHTML = ''; $('#count').textContent = ''; $('#empty').hidden = true; $('#emptyOutfits').hidden = true;
     return tab === 'plan' ? renderPlan() : renderStats();
   }
+  renderSortOptions();
   if (tab === 'outfits') return renderOutfits();
   renderFilters();
   const list = filteredItems();
@@ -1692,8 +1735,8 @@ function renderOutfits() {
   const q = $('#search').value.trim().toLowerCase();
   const list = outfits
     .filter((o) => Object.entries(outfitFilters).every(([k, v]) => !v || (o[k] || []).includes(v)))
-    .filter((o) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q))
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    .filter((o) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q));
+  sortOutfits(list, $('#sort').value);
   $('#count').textContent = outfits.length
     ? (list.length === outfits.length ? `${outfits.length} ${outfits.length === 1 ? 'Outfit' : 'Outfits'}` : `${list.length} von ${outfits.length} Outfits`)
     : '';
@@ -2554,8 +2597,9 @@ function gotoItems(f = {}, sort = null) {
   for (const k of Object.keys(filters)) delete filters[k];
   Object.assign(filters, f);
   localStorage.setItem('ks_filters', JSON.stringify(filters));
-  if (sort) { $('#sort').value = sort; localStorage.setItem('ks_sort', sort); }
+  if (sort) localStorage.setItem('ks_sort', sort);
   tab = 'items'; localStorage.setItem('ks_tab', tab);
+  $('#sort').dataset.for = '';
   $('#search').value = '';
   render();
   window.scrollTo(0, 0);
@@ -2914,7 +2958,7 @@ function wireEvents() {
     pick.onDone?.(next);
   });
   $('#search').addEventListener('input', render);
-  $('#sort').addEventListener('change', () => { localStorage.setItem('ks_sort', $('#sort').value); render(); });
+  $('#sort').addEventListener('change', () => { localStorage.setItem(sortKey(tab), $('#sort').value); render(); });
   $('#filterToggle').addEventListener('click', () => { $('#filters').hidden = !$('#filters').hidden; });
   $('#filters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
@@ -3240,7 +3284,7 @@ async function init() {
   }
   localStorage.removeItem('ks_clientId');
   buildFieldInputs();
-  $('#sort').value = localStorage.getItem('ks_sort') || 'new';
+  renderSortOptions();
   wireEvents();
   wirePlanner();
   await DB.open();

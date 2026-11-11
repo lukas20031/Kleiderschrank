@@ -25,6 +25,7 @@
 </script>
 </head>
 <body>
+<div class="appbar">
 <header class="topbar">
   <h1>Kleiderschrank</h1>
   <button id="syncBtn" class="sync" type="button" title="Synchronisieren">
@@ -35,23 +36,15 @@
   </button>
 </header>
 
-<div id="banner" class="banner" hidden></div>
-
 <section class="toolbar">
   <input id="search" type="search" placeholder="Suchen …" autocomplete="off">
   <button id="filterToggle" class="chipbtn" type="button">Filter <span id="filterCount"></span></button>
-  <select id="sort" aria-label="Sortierung">
-    <option value="new">Neueste</option>
-    <option value="name">Name</option>
-    <option value="kategorie">Kategorie</option>
-    <option value="lagerort">Lagerort</option>
-    <option value="worn_recent">Zuletzt getragen</option>
-    <option value="worn_old">Lange nicht getragen</option>
-    <option value="worn_most">Am häufigsten getragen</option>
-    <option value="cpw">Preis pro Tragen</option>
-  </select>
+  <select id="sort" aria-label="Sortierung"></select>
 </section>
 <section id="filters" class="filters" hidden></section>
+</div>
+
+<div id="banner" class="banner" hidden></div>
 
 <main>
   <p id="count" class="count"></p>
