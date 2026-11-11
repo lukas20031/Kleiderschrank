@@ -632,3 +632,13 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 .pcheck { font-size: 11px; width: 34px; height: 34px; }
 .pitem.part .pcheck { border-color: var(--brand); color: var(--brand); }
 @media (prefers-color-scheme: dark) { .pitem.part .pcheck { border-color: #8fd0c6; color: #8fd0c6; } }
+
+/* Farbfilter mit Farbkreisen */
+.filters .fchips { grid-column: 1 / -1; display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.filters .fchips > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters .fchips .chipbtn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 5px; font-size: 13px; color: var(--ink); }
+.filters .fchips .chipbtn small { color: var(--muted); font-size: 11px; }
+.filters .fchips .chipbtn.active small { color: inherit; opacity: .8; }
+.filters .fchips .sw { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0,0,0,.2); display: inline-block; flex: 0 0 auto; }
+.filters .fchips .chipbtn.active { color: var(--brand-ink); }
+.filters .fchips .chipbtn.active .sw { box-shadow: 0 0 0 2px var(--brand-ink); }

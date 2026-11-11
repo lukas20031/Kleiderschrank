@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.11.3';
+const APP_VERSION = '2.12.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1830,6 +1830,12 @@ function filterSelectsHtml(fState, withStatus = true, base = items) {
     const cur = fState[f.key] || '';
     if (cur && cur !== CAT_NONE && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
     const none = f.key === 'kategorie' ? pool.filter((i) => !i.kategorie).length : 0;
+    if (f.swatch) {
+      // Farben als Knöpfe mit Farbkreis, die häufigste zuerst
+      vals.sort((a, b) => b[1] - a[1] || (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9));
+      return `<div class="fchips"><span>${esc(f.label)}</span><div>${vals.map(([v, n]) =>
+        `<button type="button" class="chipbtn${v === cur ? ' active' : ''}" data-fchip="${f.key}" data-val="${esc(v)}" aria-pressed="${v === cur}">${swatch(v)}${esc(v)} <small>${n}</small></button>`).join('') || '<small class="muted">keine</small>'}</div></div>`;
+    }
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')
     }${none ? `<option value="${CAT_NONE}"${cur === CAT_NONE ? ' selected' : ''}>Nicht zugeordnet (${none})</option>` : ''}</select></label>`;
@@ -3819,6 +3825,8 @@ function wireEvents() {
     renderPicker();
   });
   $('#pickFilters').addEventListener('click', (e) => {
+    const fc = e.target.closest('[data-fchip]');
+    if (fc) { setFilter(pick.filters, fc.dataset.fchip, pick.filters[fc.dataset.fchip] === fc.dataset.val ? '' : fc.dataset.val); return renderPicker(); }
     if (!e.target.closest('[data-reset-filters]')) return;
     pick.filters = {};
     renderPicker();
@@ -3860,6 +3868,13 @@ function wireEvents() {
     render();
   });
   $('#filters').addEventListener('click', (e) => {
+    const fc = e.target.closest('[data-fchip]');
+    if (fc && tab !== 'outfits') {
+      const [st, key] = tab === 'wish' ? [wishFilters, 'ks_wfilters'] : [filters, 'ks_filters'];
+      setFilter(st, fc.dataset.fchip, st[fc.dataset.fchip] === fc.dataset.val ? '' : fc.dataset.val); // nochmal tippen = abwählen
+      localStorage.setItem(key, JSON.stringify(st));
+      return render();
+    }
     if (!e.target.closest('[data-reset-filters]')) return;
     if (tab === 'outfits') {
       for (const k of Object.keys(outfitFilters)) delete outfitFilters[k];
