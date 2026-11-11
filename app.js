@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.9.6';
+const APP_VERSION = '2.9.7';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -808,20 +808,93 @@ function prepareColorMask(base) {
     const on = !!opaqueBorder.length && share >= 0.08 && !(k === midK && k !== mainK && midShare >= 0.3);
     return { c, rgb: rgb(c), share, midShare, on, main: k === mainK };
   }).filter((cl) => cl.share > 0).sort((a, b) => b.share - a.share);
-  const prep = { w, h, Y, U, V, A, border, clusters, dist: new Float32Array(n) };
+  const d2 = (i, c) => (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2;
+  const minD = (i, list) => { let bd = Infinity; for (const c of list) { const dd = d2(i, c); if (dd < bd) bd = dd; } return Math.sqrt(bd); };
+  const kmeans = (idx, k) => {
+    let cen = Array.from({ length: k }, (_, j) => { const i = idx[Math.floor((j + 0.5) * idx.length / k)]; return [Y[i], U[i], V[i]]; });
+    let cnt = new Array(k).fill(0);
+    for (let it = 0; it < 8; it++) {
+      const sum = cen.map(() => [0, 0, 0]); cnt = new Array(k).fill(0);
+      for (const i of idx) {
+        let best = 0, bd = Infinity;
+        for (let j = 0; j < k; j++) { const dd = d2(i, cen[j]); if (dd < bd) { bd = dd; best = j; } }
+        sum[best][0] += Y[i]; sum[best][1] += U[i]; sum[best][2] += V[i]; cnt[best]++;
+      }
+      cen = cen.map((c, j) => (cnt[j] ? sum[j].map((v) => v / cnt[j]) : c));
+    }
+    return cen.map((c, j) => ({ c, n: cnt[j] })).filter((x) => x.n);
+  };
+  // Farben des Teils: bis zu 3 Farbgruppen aus der Bildmitte. Was dem Teil ähnlicher ist als dem Untergrund, bleibt geschützt.
+  const midPix = [];
+  for (let y = Math.floor(h / 3); y < Math.ceil(h * 2 / 3); y += 2) for (let x = Math.floor(w / 3); x < Math.ceil(w * 2 / 3); x += 2) { const i = y * w + x; if (A[i]) midPix.push(i); }
+  const fg = midPix.length > 50 ? kmeans(midPix, 3).filter((x) => x.n >= midPix.length * 0.1).map((x) => x.c) : [];
+  // Weitere Untergrund-Farben, die den Rand nicht berühren (z. B. ein Faltbrett unter dem Teil):
+  // deutlich anders als das Teil und als die Randfarben, und groß genug.
+  const onC = clusters.filter((cl) => cl.on).map((cl) => cl.c);
+  const fgUse = fg.filter((f) => onC.every((c) => hueDist(f, c) > 10));
+  const minH = (i, list) => { let bd = Infinity; const px = [Y[i], U[i], V[i]]; for (const c of list) { const dd = hueDist(px, c); if (dd < bd) bd = dd; } return bd; };
+  if (onC.length && fgUse.length) {
+    const cand = []; let total = 0;
+    for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+      const i = y * w + x; if (!A[i]) continue; total++;
+      if (minD(i, onC) > 30 && minH(i, onC) > 45 && minH(i, fgUse) > 45) cand.push(i);
+    }
+    if (cand.length >= total * 0.03) {
+      let ex = kmeans(cand, 2);
+      if (ex.length === 2 && Math.hypot(...ex[0].c.map((v, j) => v - ex[1].c[j])) < 28) {
+        const nn = ex[0].n + ex[1].n; ex = [{ c: ex[0].c.map((v, j) => (v * ex[0].n + ex[1].c[j] * ex[1].n) / nn), n: nn }];
+      }
+      for (const x of ex) if (x.n >= total * 0.03) clusters.push({ c: x.c, rgb: rgb(x.c), share: 0, midShare: 0, on: true, main: false, extra: true });
+    }
+  }
+  const prep = { w, h, Y, U, V, A, border, clusters, fg, dist: new Float32Array(n) };
   colorDist(prep);
   return prep;
+}
+/** Farbabstand, der den Farbton stark und die Helligkeit kaum zählt – trennt z. B. ein olivgrünes Teil
+ *  von rosa-grauem Untergrund, auch wenn Sonne und Schatten die Helligkeit stark verändern. */
+const hueDist = (a, b) => Math.sqrt(0.15 * (a[0] - b[0]) ** 2 + 6 * ((a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2));
+function boxBlur(src, w, h, r) {
+  const tmp = new Float32Array(src.length), out = new Float32Array(src.length);
+  for (let y = 0; y < h; y++) {
+    let acc = 0; const row = y * w;
+    for (let x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x))];
+    for (let x = 0; x < w; x++) { tmp[row + x] = acc; acc += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]; }
+  }
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let y = -r; y <= r; y++) acc += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+    for (let y = 0; y < h; y++) { out[y * w + x] = acc; acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]; }
+  }
+  return out;
 }
 /** Abstand jedes Pixels zur nächsten eingeschalteten Untergrund-Farbe */
 function colorDist(prep) {
   const { Y, U, V, A, dist } = prep;
   const centers = prep.clusters.filter((cl) => cl.on).map((cl) => cl.c);
+  // Teil-Farben, die (fast) einer eingeschalteten Untergrund-Farbe entsprechen, schützen nicht
+  const fg = (prep.fg || []).filter((f) => centers.every((c) => hueDist(f, c) > 10));
+  // Je Pixel: Ist es im Farbton dem Teil ähnlicher als dem Untergrund? (geglättet gegen Bildrauschen)
+  let like = null;
+  if (fg.length && centers.length) {
+    const score = new Float32Array(dist.length);
+    const hd = (i, c) => 0.15 * (Y[i] - c[0]) ** 2 + 6 * ((U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2);
+    for (let i = 0; i < score.length; i++) {
+      let b = Infinity, f = Infinity;
+      for (const c of centers) { const dd = hd(i, c); if (dd < b) b = dd; }
+      for (const c of fg) { const dd = hd(i, c); if (dd < f) f = dd; }
+      score[i] = Math.sqrt(b) - Math.sqrt(f);
+    }
+    like = boxBlur(score, prep.w, prep.h, 3);
+  }
   for (let i = 0; i < dist.length; i++) {
     if (!A[i]) { dist[i] = 0; continue; }
     if (!centers.length) { dist[i] = Infinity; continue; }
     let bd = Infinity;
     for (const c of centers) { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) bd = dd; }
-    dist[i] = Math.sqrt(bd);
+    bd = Math.sqrt(bd);
+    // Dem Teil ähnlicher als dem Untergrund: nur mit deutlich höherer Toleranz entfernbar
+    dist[i] = like && like[i] > 0 ? bd + 45 : bd;
   }
 }
 /* Teil 2 (bei jeder Toleranz-Änderung): vom Rand aus füllen und Maske in voller Größe erzeugen */
@@ -850,7 +923,7 @@ function colorMask(prep, tol, W, H) {
   prep.fixed = '';
   let { bg, kept } = floodBg(prep, tol);
   if (kept < MIN_KEPT && prep.clusters.filter((cl) => cl.on).length > 1) {
-    for (const cl of prep.clusters) cl.on = cl.main;
+    for (const cl of prep.clusters) cl.on = cl.main || !!cl.extra;
     colorDist(prep);
     ({ bg, kept } = floodBg(prep, tol));
     prep.fixed = 'farben';
