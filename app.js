@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.9.5';
+const APP_VERSION = '2.9.6';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -791,19 +791,41 @@ function prepareColorMask(base) {
     }
     cs = cs.map((c, k) => (counts[k] ? sum[k].map((v) => v / counts[k]) : c));
   }
-  // Seltene Randfarben (z. B. ein Ärmel, der den Rand berührt) nicht als Untergrund werten
-  const centers = opaqueBorder.length ? cs.filter((_, k) => counts[k] >= kb.length * 0.08) : [];
-  const dist = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
+  // Wie häufig ist jede Randfarbe in der Bildmitte (mittleres Drittel)? Dort liegt meist das Teil.
+  const nearest = (i) => { let best = 0, bd = Infinity; cs.forEach((c, k) => { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) { bd = dd; best = k; } }); return best; };
+  const mid = new Array(K).fill(0);
+  let midN = 0;
+  for (let y = Math.floor(h / 3); y < Math.ceil(h * 2 / 3); y += 2) for (let x = Math.floor(w / 3); x < Math.ceil(w * 2 / 3); x += 2) {
+    const i = y * w + x; if (!A[i]) continue; mid[nearest(i)]++; midN++;
+  }
+  const rgb = (c) => { const y = c[0] / 0.6; return [y + 1.402 * c[2], y - 0.344 * c[1] - 0.714 * c[2], y + 1.772 * c[1]].map((v) => Math.max(0, Math.min(255, Math.round(v)))); };
+  const mainK = counts.indexOf(Math.max(...counts));
+  const midK = mid.indexOf(Math.max(...mid));
+  const clusters = cs.map((c, k) => {
+    const share = counts[k] / (kb.length || 1), midShare = midN ? mid[k] / midN : 0;
+    // Untergrund = häufig am Rand. Ausnahmen: seltene Randfarben (z. B. ein Ärmel am Rand) und die Farbe,
+    // die die Bildmitte beherrscht, aber nicht die Hauptfarbe des Randes ist – das ist fast immer das Teil selbst.
+    const on = !!opaqueBorder.length && share >= 0.08 && !(k === midK && k !== mainK && midShare >= 0.3);
+    return { c, rgb: rgb(c), share, midShare, on, main: k === mainK };
+  }).filter((cl) => cl.share > 0).sort((a, b) => b.share - a.share);
+  const prep = { w, h, Y, U, V, A, border, clusters, dist: new Float32Array(n) };
+  colorDist(prep);
+  return prep;
+}
+/** Abstand jedes Pixels zur nächsten eingeschalteten Untergrund-Farbe */
+function colorDist(prep) {
+  const { Y, U, V, A, dist } = prep;
+  const centers = prep.clusters.filter((cl) => cl.on).map((cl) => cl.c);
+  for (let i = 0; i < dist.length; i++) {
     if (!A[i]) { dist[i] = 0; continue; }
+    if (!centers.length) { dist[i] = Infinity; continue; }
     let bd = Infinity;
     for (const c of centers) { const dd = (Y[i] - c[0]) ** 2 + (U[i] - c[1]) ** 2 + (V[i] - c[2]) ** 2; if (dd < bd) bd = dd; }
     dist[i] = Math.sqrt(bd);
   }
-  return { w, h, dist, border };
 }
 /* Teil 2 (bei jeder Toleranz-Änderung): vom Rand aus füllen und Maske in voller Größe erzeugen */
-function colorMask(prep, tol, W, H) {
+function floodBg(prep, tol) {
   const { w, h, dist, border } = prep;
   const bg = new Uint8Array(w * h);
   const stack = [];
@@ -816,6 +838,29 @@ function colorMask(prep, tol, W, H) {
     if (p >= w && !bg[p - w] && dist[p - w] <= tol) { bg[p - w] = 1; stack.push(p - w); }
     if (p < w * (h - 1) && !bg[p + w] && dist[p + w] <= tol) { bg[p + w] = 1; stack.push(p + w); }
   }
+  let kept = 0;
+  for (let i = 0; i < bg.length; i++) if (!bg[i] && prep.A[i]) kept++;
+  return { bg, kept: kept / bg.length };
+}
+/** Sicherheitsnetz: bleibt vom Teil (fast) nichts übrig, war eine Untergrund-Farbe in Wahrheit das Teil.
+ *  Dann nur die Hauptfarbe des Randes verwenden und notfalls die Toleranz senken. */
+const MIN_KEPT = 0.04;
+function colorMask(prep, tol, W, H) {
+  const { w, h } = prep;
+  prep.fixed = '';
+  let { bg, kept } = floodBg(prep, tol);
+  if (kept < MIN_KEPT && prep.clusters.filter((cl) => cl.on).length > 1) {
+    for (const cl of prep.clusters) cl.on = cl.main;
+    colorDist(prep);
+    ({ bg, kept } = floodBg(prep, tol));
+    prep.fixed = 'farben';
+  }
+  for (let i = 0; i < 4 && kept < MIN_KEPT && tol > 8; i++) {
+    tol = Math.round(tol * 0.65);
+    ({ bg, kept } = floodBg(prep, tol));
+    prep.fixed = 'toleranz';
+  }
+  prep.usedTol = tol;
   const small = newCanvas(w, h);
   const sctx = small.getContext('2d');
   const img = sctx.createImageData(w, h);
@@ -1100,6 +1145,7 @@ const Crop = {
   },
   showColorPanel(on) {
     $('#colorPanel').hidden = !on;
+    $('#bgSwatches').hidden = !on || this.colorMode !== 'edge' || !this.colorPrep.edge;
     $('#cropColor').classList.toggle('active', on && this.colorMode === 'edge');
     $('#cropCenter').classList.toggle('active', on && this.colorMode === 'center');
     if (on) $('#colorTol').value = this.tols[this.colorMode];
@@ -1196,8 +1242,32 @@ const Crop = {
       this.setMask(centerMask(this.colorPrep.center, this.tols.center, W, H));
     } else {
       this.colorPrep.edge ??= prepareColorMask(this.base);
-      this.setMask(colorMask(this.colorPrep.edge, this.tols.edge, W, H));
+      const prep = this.colorPrep.edge;
+      this.setMask(colorMask(prep, this.tols.edge, W, H));
+      if (prep.usedTol !== this.tols.edge) { this.tols.edge = prep.usedTol; $('#colorTol').value = prep.usedTol; }
+      if (prep.fixed) toast(prep.fixed === 'farben' ? 'Eine Randfarbe gehörte zum Teil – sie wird nicht mehr als Untergrund gewertet.' : 'Toleranz verringert, damit das Teil erhalten bleibt.');
     }
+    this.renderBgSwatches();
+  },
+  /** Untergrund-Farben zum An-/Abwählen (nur beim Modus „Untergrund“) */
+  renderBgSwatches() {
+    const box = $('#bgSwatches');
+    const prep = this.colorMode === 'edge' ? this.colorPrep.edge : null;
+    box.hidden = !prep || !prep.clusters.length;
+    if (box.hidden) return;
+    box.innerHTML = `<span>Untergrund:</span>${prep.clusters.map((cl, i) => `<button type="button" class="bgsw${cl.on ? ' on' : ''}" data-bgc="${i}"
+      style="background:rgb(${cl.rgb.join(',')})" title="${cl.on ? 'Wird entfernt – antippen, um zu behalten' : 'Bleibt erhalten – antippen, um zu entfernen'}" aria-pressed="${cl.on}"></button>`).join('')}
+      <small>antippen = an/aus</small>`;
+  },
+  toggleBgColor(i) {
+    const prep = this.colorPrep.edge;
+    if (!prep || this.busy) return;
+    prep.clusters[i].on = !prep.clusters[i].on;
+    colorDist(prep);
+    this.pushUndo();
+    this.setMask(colorMask(prep, this.tols.edge, this.base.width, this.base.height));
+    if (prep.usedTol !== this.tols.edge) { this.tols.edge = prep.usedTol; $('#colorTol').value = prep.usedTol; }
+    this.renderBgSwatches();
   },
   toggleColor(mode) {
     if (this.busy) return;
@@ -3673,6 +3743,7 @@ function wireEvents() {
   $('#cropReset').addEventListener('click', () => Crop.reset());
   $('#cropBg').addEventListener('click', () => Crop.removeBg());
   $('#cropColor').addEventListener('click', () => Crop.toggleColor('edge'));
+  $('#bgSwatches').addEventListener('click', (e) => { const b = e.target.closest('[data-bgc]'); if (b) Crop.toggleBgColor(Number(b.dataset.bgc)); });
   $('#cropCenter').addEventListener('click', () => Crop.toggleColor('center'));
   let tolTimer;
   $('#colorTol').addEventListener('input', (e) => {

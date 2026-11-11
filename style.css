@@ -565,3 +565,10 @@ button.orow { grid-template-columns: 54px 1fr; }
 hr.sep { border: 0; border-top: 1px solid var(--line); margin: 18px 0 0; }
 #detailWear { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 4px; }
 .copybtn { margin-top: 14px; }
+
+/* Untergrund-Farben im Foto-Editor */
+.bgswatches { display: flex; align-items: center; gap: 8px; color: #ddd; font-size: 13px; padding: 2px 0 6px; flex-wrap: wrap; justify-content: center; }
+.bgswatches small { color: #999; font-size: 11px; }
+.bgsw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #555; padding: 0; position: relative; }
+.bgsw.on { border-color: #9fe0d5; box-shadow: 0 0 0 2px #9fe0d5; }
+.bgsw:not(.on)::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px; background: #ff8a73; transform: rotate(45deg); }
