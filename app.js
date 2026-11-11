@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.11.1';
+const APP_VERSION = '2.11.2';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1177,9 +1177,14 @@ const Crop = {
     if (h > H) { h = H; w = H * this.ratio; }
     this.rect = { x: (W - w) / 2, y: (H - h) / 2, w, h };
   },
-  layout() {
+  layout(keepZoom = false) {
     const stage = $('#cropStage');
-    const maxW = stage.clientWidth - 32, maxH = stage.clientHeight - 32;
+    // Platz = Bühne minus Innenabstand (Rand für die Rahmen-Griffe)
+    const cs = getComputedStyle(stage);
+    const maxW = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const maxH = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    if (maxW <= 0 || maxH <= 0) return;
+    const z = keepZoom ? this.zoom : 1;
     const W = this.base.width, H = this.base.height;
     this.scale = Math.min(maxW / W, maxH / H);
     const cw = Math.round(W * this.scale), ch = Math.round(H * this.scale);
@@ -1188,7 +1193,8 @@ const Crop = {
     cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
     cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
     this.cw = cw; this.ch = ch;
-    this.setZoom(1);
+    this.zoom = 1; this.tx = 0; this.ty = 0;
+    this.setZoom(z);
     this.redraw();
     this.drawBox();
   },
@@ -4000,6 +4006,13 @@ function wireEvents() {
   window.addEventListener('pointermove', (e) => Crop.move(e));
   window.addEventListener('pointerup', (e) => Crop.up(e));
   window.addEventListener('pointercancel', (e) => Crop.up(e));
+  // Werkzeuge ein-/ausblenden (Farbregler, Pinsel, Zoom …) ändert den Platz fürs Bild → neu einpassen
+  let relayout = 0;
+  new ResizeObserver(() => {
+    if (!$('#cropDlg').open || !Crop.base) return;
+    cancelAnimationFrame(relayout);
+    relayout = requestAnimationFrame(() => { if ($('#cropDlg').open && Crop.base && Crop.src) Crop.layout(true); });
+  }).observe($('#cropStage'));
   $('#zoomSlider').addEventListener('input', (e) => Crop.setZoom(Number(e.target.value) / 100));
   $('#zoomReset').addEventListener('click', () => Crop.setZoom(1));
   // Mausrad / Touchpad: zoomen am Mauszeiger
