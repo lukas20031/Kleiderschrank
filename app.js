@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.9.1';
+const APP_VERSION = '2.9.2';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1531,11 +1531,9 @@ const SEASON_DEF = { key: 'jahreszeit', label: 'Jahreszeit', order: new Map(JAHR
 function filterSelectsHtml(fState, withStatus = true, base = items) {
   const wish = base === wishes;
   const defs = [...CAT_KEYS, ...FIELDS.filter((f) => !f.noFilter && !(wish && WISH_HIDDEN.includes(f.key))), { key: 'anlass', label: 'Anlass' }, SEASON_DEF];
-  // Unterkategorie/Art nur aus der gewählten Kategorie anbieten
-  const poolK = fState.kategorie ? base.filter((i) => i.kategorie === fState.kategorie) : base;
-  const poolU = fState.unterkategorie ? poolK.filter((i) => i.unterkategorie === fState.unterkategorie) : poolK;
+  // Jede Auswahl zeigt nur Werte, die mit den übrigen Filtern noch vorkommen
   return defs.map((f) => {
-    const pool = f.key === 'unterkategorie' ? poolK : f.key === 'typ' ? poolU : base;
+    const pool = base.filter((it) => matchFilters(it, fState, f.key));
     const vals = [...valuesFor(f.key, pool).entries()];
     if (CAT_KEYS.some((c) => c.key === f.key)) {
       const rank = (v) => {
@@ -1550,7 +1548,7 @@ function filterSelectsHtml(fState, withStatus = true, base = items) {
     }
     const cur = fState[f.key] || '';
     if (cur && cur !== CAT_NONE && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
-    const none = f.key === 'kategorie' ? base.filter((i) => !i.kategorie).length : 0;
+    const none = f.key === 'kategorie' ? pool.filter((i) => !i.kategorie).length : 0;
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')
     }${none ? `<option value="${CAT_NONE}"${cur === CAT_NONE ? ' selected' : ''}>Nicht zugeordnet (${none})</option>` : ''}</select></label>`;
@@ -1572,16 +1570,25 @@ function renderFilters() {
 }
 
 /** Teile nach Suchtext, Filtern und Sortierung */
+/** Ohne Angabe bei Anlass/Jahreszeit passt ein Eintrag zu jedem Filterwert */
+const OPEN_KEYS = ['anlass', 'jahreszeit'];
+/** Passt ein Teil zu allen Filtern (optional ohne einen bestimmten, für die Auswahlmöglichkeiten)? */
+function matchFilters(it, fState, skip = null) {
+  if (!matchSpecial(it, skip && SPECIAL_KEYS.includes(skip) ? { ...fState, [skip]: '' } : fState)) return false;
+  for (const [k, v] of Object.entries(fState)) {
+    if (!v || k === skip || SPECIAL_KEYS.includes(k)) continue;
+    if (v === CAT_NONE) { if (it[k]) return false; continue; }
+    const vals = fieldValues(it, k);
+    if (OPEN_KEYS.includes(k) && !vals.length) continue;
+    if (!vals.includes(v)) return false;
+  }
+  return true;
+}
 function filterItems(query, fState, sort = 'new', pool = items) {
   const q = String(query || '').trim().toLowerCase();
   const terms = q ? q.split(/\s+/) : [];
   let list = pool.filter((it) => {
-    if (!matchSpecial(it, fState)) return false;
-    for (const [k, v] of Object.entries(fState)) {
-      if (!v || SPECIAL_KEYS.includes(k)) continue;
-      if (v === CAT_NONE) { if (it[k]) return false; }
-      else if (!fieldValues(it, k).includes(v)) return false;
-    }
+    if (!matchFilters(it, fState)) return false;
     if (!terms.length) return true;
     const hay = [it.name, it.notiz, it.status, it.waesche ? 'Wäsche' : '', it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...(it.jahreszeit || []), ...FIELDS.map((f) => fieldText(it, f.key))].join(' ').toLowerCase();
     return terms.every((t) => hay.includes(t));
@@ -1799,9 +1806,13 @@ function collageHtml(o, big = false, usePhoto = true) {
 }
 // Filter für Outfits (eigener Zustand, gespeichert)
 const outfitFilters = JSON.parse(localStorage.getItem('ks_ofilters') || '{}');
+function matchOutfit(o, fs, skip = null) {
+  return Object.entries(fs).every(([k, v]) => !v || k === skip || (k === 'fav' ? !!o.favorit : k === 'wetter' ? todayMax() === null || fitsToday(o)
+    : !(o[k] || []).length && OPEN_KEYS.includes(k) ? true : (o[k] || []).includes(v)));
+}
 function outfitFilterHtml() {
   return [{ key: 'anlass', label: 'Anlass' }, SEASON_DEF].map((f) => {
-    const vals = [...valuesFor(f.key, outfits).entries()];
+    const vals = [...valuesFor(f.key, outfits.filter((o) => matchOutfit(o, outfitFilters, f.key))).entries()];
     if (f.order) vals.sort((a, b) => (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9)); else vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
     const cur = outfitFilters[f.key] || '';
     if (cur && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
@@ -1818,7 +1829,7 @@ function renderOutfits() {
   $('#filterToggle').classList.toggle('active', nf > 0);
   const q = $('#search').value.trim().toLowerCase();
   const list = outfits
-    .filter((o) => Object.entries(outfitFilters).every(([k, v]) => !v || (k === 'fav' ? !!o.favorit : k === 'wetter' ? todayMax() === null || fitsToday(o) : (o[k] || []).includes(v))))
+    .filter((o) => matchOutfit(o, outfitFilters))
     .filter((o) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q));
   sortOutfits(list, $('#sort').value);
   $('#count').textContent = outfits.length
@@ -1865,6 +1876,7 @@ function openOutfitDetail(id) {
   renderFav('#outfitFav', o);
   if ($('#outfitDetail').open) $('#outfitDetail').close();
   $('#outfitDetail').showModal();
+  toTop($('#outfitDetail'));
 }
 
 /* Outfit-Editor */
@@ -1885,6 +1897,7 @@ function openOutfitEditor(id = null) {
   $('#outfitDelete').hidden = !o;
   renderOutfitItems();
   $('#outfitEditor').showModal();
+  toTop($('#outfitEditor'));
 }
 function renderOutfitChips() {
   $('#oAnlassChips').innerHTML = chipsHtml(allAnlaesse(oed.anlass), oed.anlass, 'anlass');
@@ -1996,6 +2009,7 @@ async function openDetail(id) {
   // Bereits offen (z. B. unter einem Outfit)? Dann nach oben holen
   if ($('#detail').open) $('#detail').close();
   $('#detail').showModal();
+  toTop($('#detail'));
   for (const img of gal.querySelectorAll('img')) {
     fullUrl(img.dataset.pid).then((u) => { if (u) img.src = u; });
   }
@@ -2236,6 +2250,7 @@ function openEditor(id = null, copyId = null) {
   renderPickFields();
   renderPhotoStrip();
   $('#editor').showModal();
+  toTop($('#editor'));
 }
 
 async function saveEditor() {
@@ -2607,6 +2622,7 @@ function openPack(id = null) {
   pk = { id: p?.id || uid(), saved: !!p };
   renderPack(true);
   $('#packDlg').showModal();
+  toTop($('#packDlg'));
 }
 function curPack() { return packlists.find((x) => x.id === pk.id) || { id: pk.id, name: '', von: '', bis: '', notiz: '', itemIds: [], checked: [] }; }
 function renderPack(fields = false) {
@@ -3321,6 +3337,11 @@ function exportCsv() {
 
 /* ---------------- Hilfen ---------------- */
 let toastTimer;
+/** Wiederverwendete Dialoge immer oben beginnen (sonst bleibt die Scrollposition vom letzten Mal) */
+function toTop(dlg) {
+  const reset = () => dlg.querySelectorAll('.sheetbody').forEach((b) => { b.scrollTop = 0; });
+  reset(); requestAnimationFrame(reset);
+}
 function toast(msg) {
   const t = $('#toast');
   // In den obersten offenen Dialog hängen, sonst liegt die Meldung hinter dem Dialog
