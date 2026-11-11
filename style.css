@@ -406,8 +406,8 @@ body[data-tab="stats"] .toolbar, body[data-tab="stats"] #filters, body[data-tab=
 .hiddendate { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .wearbox .row input[type=date]:not(.hiddendate) { flex: 0 1 auto; padding: 7px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
 .wearbox .row { position: relative; }
-.planned { margin: 10px 0 0; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.planned .tag { padding: 2px 4px 2px 10px; }
+.wearbox .planned { margin: 10px 0 0; font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.wearbox .planned .tag { padding: 2px 4px 2px 10px; }
 .x { border: 0; background: none; color: var(--muted); font-size: 15px; padding: 4px 8px; }
 .wearhist { margin-top: 10px; font-size: 14px; }
 .wearhist summary { color: var(--brand); cursor: pointer; padding: 4px 0; }
