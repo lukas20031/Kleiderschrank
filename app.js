@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1282,6 +1282,8 @@ function detectColors(canvas, transparent) {
 
 /** Fotos nacheinander im Editor öffnen und übernehmen */
 async function addPhotos(files) {
+  const c = phCtx;
+  if (!c) return;
   for (let i = 0; i < files.length; i++) {
     try {
       let canvas = await fileToCanvas(files[i]);
@@ -1295,10 +1297,10 @@ async function addPhotos(files) {
         if (res.skipRest) skipEditing = true;
       }
       const { full, thumb, orig, ext } = await canvasToPhoto(canvas, transparent, origCanvas);
-      if (!ed) return;
-      ed.photos.push({ id: uid() + ext, isNew: true, full, thumb, orig, url: URL.createObjectURL(thumb) });
-      // Farbe vorschlagen, solange noch keine gewählt ist (nur beim ersten Foto = Titelbild)
-      if (ed.photos.length === 1 && !ed.vals.farben.length) {
+      if (phCtx !== c) return;
+      c.photos.push({ id: uid() + ext, isNew: true, full, thumb, orig, url: URL.createObjectURL(thumb), tags: [] });
+      // Farbe vorschlagen, solange noch keine gewählt ist (nur beim ersten Foto eines Teils = Titelbild)
+      if (c === ed && ed.photos.length === 1 && !ed.vals.farben.length) {
         const found = detectColors(canvas, transparent);
         if (found.length) { ed.vals.farben = found; ed.autoColor = true; renderPickFields(); }
       }
@@ -1316,7 +1318,8 @@ function trackPhoto(p) { photoTasks.add(p); p.finally(() => photoTasks.delete(p)
 
 /** Vorhandenes Foto im Editor erneut drehen/zuschneiden */
 async function reEditPhoto(idx) {
-  const p = ed.photos[idx];
+  const c = phCtx;
+  const p = c.photos[idx];
   let blob = p.isNew ? p.full : (photoMap.get(p.id)?.full || null);
   if (!blob && !p.isNew) {
     const u = await fullUrl(p.id);
@@ -1340,11 +1343,11 @@ async function reEditPhoto(idx) {
     // Ältere freigestellte Fotos ohne gespeichertes Original: weiter bearbeiten nur auf dem freigestellten Bild
     res = await Crop.edit(await fileToCanvas(blob), 'Foto bearbeiten', false, png);
   }
-  if (!res || !ed) return;
+  if (!res || phCtx !== c) return;
   const { full, thumb, orig, ext } = await canvasToPhoto(res.canvas, res.transparent, res.orig);
-  if (p.isNew) URL.revokeObjectURL(p.url); else ed.removed.push(p.id);
-  // Bearbeitetes Foto ersetzt das alte an derselben Stelle
-  ed.photos[idx] = { id: uid() + ext, isNew: true, full, thumb, orig, url: URL.createObjectURL(thumb) };
+  if (p.isNew) URL.revokeObjectURL(p.url); else c.removed.push(p.id);
+  // Bearbeitetes Foto ersetzt das alte an derselben Stelle (Tags bleiben)
+  c.photos[idx] = { id: uid() + ext, isNew: true, full, thumb, orig, url: URL.createObjectURL(thumb), tags: p.tags || [] };
   renderPhotoStrip();
 }
 
@@ -1490,7 +1493,7 @@ async function pullChanges() {
   await pullCollection(S, 'packlisten');
 
   // Fehlende Vorschaubilder laden, verwaiste lokale Fotos entfernen
-  const all = (await DB.all('items')).filter((i) => !i._deleted);
+  const all = [...await DB.all('items'), ...await DB.all('outfits')].filter((i) => !i._deleted);
   const referenced = new Set(all.flatMap((i) => i.photos || []));
   const have = new Map((await DB.all('photos')).map((p) => [p.id, p]));
   for (const it of all) {
@@ -1650,7 +1653,10 @@ function photoCell(it) {
   return url ? `<img class="${isPng(pid) ? 'cut' : ''}" loading="lazy" src="${url}" alt="${esc(itemTitle(it))}">` : '<span class="ph">–</span>';
 }
 /** Outfit-Bild: nach Körperbereich übereinander, sonst Collage aus bis zu 4 Teilen */
-function collageHtml(o, big = false) {
+function collageHtml(o, big = false, usePhoto = true) {
+  // Eigenes Outfit-Foto vorhanden? Dann ist das erste davon das Titelbild
+  const cover = usePhoto && (o.photos || [])[0];
+  if (cover) return `<div class="collage cover"><img loading="lazy" class="${isPng(cover) ? 'cut' : ''}" src="${thumbUrl(cover)}" alt=""></div>`;
   const all = sortBySlot(outfitItems(o));
   if (!all.length) return '<div class="noimg">Noch keine Teile</div>';
   const by = { top: [], full: [], bottom: [], shoes: [], side: [] };
@@ -1715,7 +1721,11 @@ function openOutfitDetail(id) {
   outfitDetailId = id;
   $('#outfitDetailTitle').textContent = outfitTitle(o);
   const its = outfitItemsSorted(o);
-  $('#outfitDetailLook').innerHTML = its.length ? collageHtml(o, true) : '';
+  const gal = $('#outfitDetailPhotos');
+  gal.innerHTML = (o.photos || []).map((pid) => photoFigure(pid, (o.photoTags || {})[pid])).join('');
+  gal.hidden = !(o.photos || []).length;
+  for (const img of gal.querySelectorAll('img')) fullUrl(img.dataset.pid).then((u) => { if (u) img.src = u; });
+  $('#outfitDetailLook').innerHTML = its.length ? collageHtml(o, true, false) : '';
   $('#outfitDetailLook').hidden = !its.length;
   $('#outfitDetailItems').innerHTML = its.map((it) => itemCardHtml(it)).join('') || '<p class="muted">Noch keine Teile.</p>';
   $('#outfitDetailNote').textContent = o.notiz || '';
@@ -1735,7 +1745,10 @@ function openOutfitEditor(id = null) {
   oed = {
     id: o?.id || uid(), isNew: !o, itemIds: [...(o?.itemIds || [])].filter((x) => items.some((i) => i.id === x)),
     anlass: new Set(o?.anlass || []), jahreszeit: new Set(o?.jahreszeit || []),
+    photos: photosFrom(o), removed: [], strip: '#outfitPhotoStrip',
   };
+  phCtx = oed;
+  renderPhotoStrip();
   renderOutfitChips();
   $('#outfitEditTitle').textContent = o ? 'Outfit bearbeiten' : 'Neues Outfit';
   $('#outfitForm').elements.oname.value = o?.name || '';
@@ -1771,10 +1784,15 @@ async function saveOutfit() {
     itemIds: oed.itemIds,
     anlass: [...oed.anlass],
     jahreszeit: JAHRESZEITEN.filter((j) => oed.jahreszeit.has(j)),
+    photos: oed.photos.map((p) => p.id),
+    photoTags: photoTagsOf(oed),
     createdAt: prev?.createdAt || now,
     updatedAt: now,
     _dirty: true,
   };
+  if (!o.photos.length) delete o.photos;
+  if (!Object.keys(o.photoTags).length) delete o.photoTags;
+  await storePhotos(oed, o.id);
   await DB.put('outfits', o);
   const id = oed.id;
   oed = null;
@@ -1784,6 +1802,7 @@ async function saveOutfit() {
 async function deleteOutfit(id) {
   const o = await DB.get('outfits', id);
   if (!o) return;
+  for (const pid of o.photos || []) await removePhotoRecord(pid);
   if (!o._etag) await DB.del('outfits', id);
   else await DB.put('outfits', { ...o, _deleted: true, _dirty: true });
   await loadState(); await recountPending(); render(); updateSyncIndicator(); scheduleSync();
@@ -1834,7 +1853,7 @@ async function openDetail(id) {
     || '<dt>–</dt><dd class="muted">Keine Angaben</dd>';
   const gal = $('#detailPhotos');
   const pids = it.photos || [];
-  gal.innerHTML = pids.map((pid) => `<img data-pid="${esc(pid)}" src="${thumbUrl(pid)}" alt=""${isPng(pid) ? ' class="cut"' : ''}>`).join('');
+  gal.innerHTML = pids.map((pid) => photoFigure(pid, (it.photoTags || {})[pid])).join('');
   renderWearBox('#detailWear', 'item', it);
   // In welchen Outfits kommt das Teil vor?
   const ofs = outfitsWith(id);
@@ -1949,11 +1968,41 @@ function renderAnlass() {
   $('#seasonChips').innerHTML = chipsHtml(JAHRESZEITEN, ed.jahreszeit, 'season');
 }
 function renderPhotoStrip() {
-  $('#photoStrip').innerHTML = ed.photos.map((p, i) => {
+  const c = phCtx;
+  if (!c) return;
+  $(c.strip).innerHTML = c.photos.map((p, i) => {
     const url = p.isNew ? p.url : thumbUrl(p.id);
-    return `<div class="ph"><img src="${url}" data-idx="${i}" alt=""${isPng(p.id) ? ' class="cut"' : ''}></div>`;
+    return `<div class="ph"><img src="${url}" data-idx="${i}" alt=""${isPng(p.id) ? ' class="cut"' : ''}>${
+      (p.tags || []).length ? `<span class="phtag">${esc(p.tags.join(' · '))}</span>` : ''}</div>`;
   }).join('');
 }
+/* Fotos gehören entweder zum Teil im Editor (ed) oder zum Outfit im Editor (oed) */
+let phCtx = null;
+const PHOTO_TAGS = ['Vorne', 'Hinten', 'Seite', 'Detail', 'Etikett', 'Getragen', 'Selfie', 'Spiegel'];
+function allPhotoTags(extra = []) {
+  const set = new Set(PHOTO_TAGS);
+  for (const r of [...items, ...outfits]) for (const t of Object.values(r.photoTags || {}).flat()) set.add(t);
+  for (const t of extra) set.add(t);
+  return [...set];
+}
+const photosFrom = (rec) => (rec?.photos || []).map((pid) => ({ id: pid, isNew: false, tags: [...((rec.photoTags || {})[pid] || [])] }));
+function photoTagsOf(c) {
+  const out = {};
+  for (const p of c.photos) if ((p.tags || []).length) out[p.id] = p.tags;
+  return out;
+}
+/** Neue Fotos speichern, entfernte zum Löschen vormerken */
+async function storePhotos(c, ownerId) {
+  for (const p of c.photos.filter((x) => x.isNew)) {
+    const rec = { id: p.id, itemId: ownerId, full: p.full, thumb: p.thumb, orig: p.orig || null, pendingUpload: true };
+    await DB.put('photos', rec);
+    photoMap.set(p.id, rec);
+    URL.revokeObjectURL(p.url);
+  }
+  for (const pid of c.removed) await removePhotoRecord(pid);
+}
+const photoFigure = (pid, tags) => `<figure><img data-pid="${esc(pid)}" src="${thumbUrl(pid)}" alt=""${isPng(pid) ? ' class="cut"' : ''}>${
+  (tags || []).length ? `<figcaption>${esc(tags.join(' · '))}</figcaption>` : ''}</figure>`;
 
 /* ---------------- Kategorie-Auswahl ---------------- */
 function renderKatButton() {
@@ -2021,7 +2070,8 @@ function openEditor(id = null, copyId = null) {
     id: orig?.id || uid(),
     isNew: !orig,
     status: orig?.status || '',
-    photos: (orig?.photos || []).map((pid) => ({ id: pid, isNew: false })),
+    strip: '#photoStrip',
+    photos: photosFrom(orig),
     removed: [],
     anlass: new Set(it?.anlass || []),
     jahreszeit: new Set(it?.jahreszeit || []),
@@ -2033,6 +2083,7 @@ function openEditor(id = null, copyId = null) {
   renderKatButton();
   $('#editTitle').textContent = orig ? 'Bearbeiten' : it ? 'Kopie' : 'Neues Teil';
   renderStatusSeg();
+  phCtx = ed;
   form.elements.bezeichnung.value = it?.name || '';
   for (const f of FIELDS.filter(isInputField)) {
     const v = it?.[f.key];
@@ -2067,6 +2118,7 @@ async function saveEditor() {
     notiz: form.elements.notiz.value.trim(),
     status: ed.status || '',
     photos: ed.photos.map((p) => p.id),
+    photoTags: photoTagsOf(ed),
     createdAt: prev?.createdAt || now,
     updatedAt: now,
     _dirty: true,
@@ -2085,13 +2137,8 @@ async function saveEditor() {
   if (it.kategorie) delete it.kategorieAlt;
   if (!it.status) delete it.status; else delete it.waesche; // Aussortiertes ist nicht in der Wäsche
 
-  for (const p of ed.photos.filter((x) => x.isNew)) {
-    const rec = { id: p.id, itemId: it.id, full: p.full, thumb: p.thumb, orig: p.orig || null, pendingUpload: true };
-    await DB.put('photos', rec);
-    photoMap.set(p.id, rec);
-    URL.revokeObjectURL(p.url);
-  }
-  for (const pid of ed.removed) await removePhotoRecord(pid);
+  if (!Object.keys(it.photoTags).length) delete it.photoTags;
+  await storePhotos(ed, it.id);
   await DB.put('items', it);
   localStorage.setItem('ks_last', JSON.stringify({ lagerort: it.lagerort }));
   ed = null;
@@ -2304,6 +2351,7 @@ const outfitsPlannedOn = (d) => outfits.filter((o) => (o.geplant || []).includes
 const outfitsWornOn = (d) => outfits.filter((o) => (o.getragen || []).includes(d));
 const itemsWornOn = (d) => items.filter((it) => (it.getragen || []).includes(d));
 function firstPhoto(o) {
+  if ((o.photos || [])[0]) return `<img class="${isPng(o.photos[0]) ? 'cut' : ''}" src="${thumbUrl(o.photos[0])}" alt="">`;
   const it = outfitItemsSorted(o).find((i) => (i.photos || []).length);
   return it ? photoCell(it) : '';
 }
@@ -2806,13 +2854,29 @@ function wireEvents() {
   });
   $('#outfitForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (photoTasks.size) {
+      toast('Fotos werden noch verarbeitet …');
+      await Promise.allSettled([...photoTasks]);
+      if (!oed) return;
+    }
     const id = await saveOutfit();
     $('#outfitEditor').close();
     toast('Outfit gespeichert');
     if ($('#detail').open && detailId) openDetail(detailId); // „In Outfits“ aktualisieren
     if ($('#outfitDetail').open && outfitDetailId === id) openOutfitDetail(id);
   });
-  $('#outfitEditor').addEventListener('close', () => { oed = null; });
+  $('#outfitEditor').addEventListener('close', () => {
+    if (oed) for (const p of oed.photos) if (p.isNew) URL.revokeObjectURL(p.url);
+    oed = null;
+  });
+  for (const sel of ['#oCameraInput', '#oPhotoInput']) {
+    $(sel).addEventListener('change', async (e) => {
+      const files = [...e.target.files];
+      e.target.value = '';
+      phCtx = oed;
+      await trackPhoto(addPhotos(files));
+    });
+  }
   $('#outfitDelete').addEventListener('click', async () => {
     if (!confirm('Dieses Outfit löschen? Die Teile selbst bleiben erhalten.')) return;
     const id = oed.id;
@@ -2992,6 +3056,7 @@ function wireEvents() {
   $('#cameraInput').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
+    phCtx = ed;
     await trackPhoto(addPhotos(files));
   });
   // Foto-Editor
@@ -3024,6 +3089,7 @@ function wireEvents() {
   $('#photoInput').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
+    phCtx = ed;
     await trackPhoto(addPhotos(files));
   });
   $('#anlassChips').addEventListener('click', (e) => {
@@ -3058,29 +3124,54 @@ function wireEvents() {
 
   // Foto-Aktionen im Editor
   let photoIdx = -1;
-  $('#photoStrip').addEventListener('click', async (e) => {
+  const renderPhotoTags = () => {
+    const p = phCtx.photos[photoIdx];
+    $('#photoTags').innerHTML = chipsHtml(allPhotoTags(p.tags), new Set(p.tags), 'ptag');
+  };
+  const onStrip = async (e) => {
     const img = e.target.closest('img');
     if (!img) return;
+    phCtx = e.currentTarget.id === 'photoStrip' ? ed : oed;
     photoIdx = Number(img.dataset.idx);
-    const p = ed.photos[photoIdx];
+    const p = phCtx.photos[photoIdx];
     $('#photoBig').src = p.isNew ? URL.createObjectURL(p.full) : thumbUrl(p.id);
     $('#photoCover').hidden = photoIdx === 0;
+    $('#photoTagNew').value = '';
+    renderPhotoTags();
     $('#photoDlg').showModal();
     if (!p.isNew) { const u = await fullUrl(p.id); if (u) $('#photoBig').src = u; }
-  });
+  };
+  $('#photoStrip').addEventListener('click', onStrip);
+  $('#outfitPhotoStrip').addEventListener('click', onStrip);
+  const toggleTag = (t) => {
+    const p = phCtx.photos[photoIdx];
+    p.tags = p.tags || [];
+    p.tags = p.tags.includes(t) ? p.tags.filter((x) => x !== t) : [...p.tags, t];
+    renderPhotoTags();
+    renderPhotoStrip();
+  };
+  $('#photoTags').addEventListener('click', (e) => { const t = e.target.closest('[data-ptag]')?.dataset.ptag; if (t) toggleTag(t); });
+  const addTag = () => {
+    const t = $('#photoTagNew').value.trim().replace(/\s+/g, ' ').slice(0, 30);
+    $('#photoTagNew').value = '';
+    const p = phCtx.photos[photoIdx];
+    if (t && !(p.tags || []).includes(t)) toggleTag(t);
+  };
+  $('#photoTagAdd').addEventListener('click', addTag);
+  $('#photoTagNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } });
   $('#photoEdit').addEventListener('click', async () => {
     $('#photoDlg').close();
     await trackPhoto(reEditPhoto(photoIdx));
   });
   $('#photoCover').addEventListener('click', () => {
-    const [p] = ed.photos.splice(photoIdx, 1);
-    ed.photos.unshift(p);
+    const [p] = phCtx.photos.splice(photoIdx, 1);
+    phCtx.photos.unshift(p);
     renderPhotoStrip();
     $('#photoDlg').close();
   });
   $('#photoDelete').addEventListener('click', () => {
-    const [p] = ed.photos.splice(photoIdx, 1);
-    if (p.isNew) URL.revokeObjectURL(p.url); else ed.removed.push(p.id);
+    const [p] = phCtx.photos.splice(photoIdx, 1);
+    if (p.isNew) URL.revokeObjectURL(p.url); else phCtx.removed.push(p.id);
     renderPhotoStrip();
     $('#photoDlg').close();
   });

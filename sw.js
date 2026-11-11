@@ -1,5 +1,5 @@
 // Service Worker: hält die App offline verfügbar. Bei Änderungen an den Dateien VERSION erhöhen.
-const VERSION = 'ks-2.3.0';
+const VERSION = 'ks-2.4.0';
 // Cross-Origin-Isolation: erlaubt dem Browser, beim Freistellen mehrere Prozessorkerne zu nutzen.
 // GitHub Pages kann diese Header nicht selbst senden, daher setzt sie der Service Worker.
 const COI_HEADERS = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' };
