@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.6.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1586,6 +1586,7 @@ function filterItems(query, fState, sort = 'new', pool = items) {
   else if (sort === 'worn_old') list.sort((a, b) => lastWorn(a).localeCompare(lastWorn(b)) || cmp(a, b, 'name'));
   else if (sort === 'worn_most') list.sort((a, b) => wornCount(b) - wornCount(a) || cmp(a, b, 'name'));
   else if (sort === 'cpw') list.sort((a, b) => (costPerWear(b) ?? -1) - (costPerWear(a) ?? -1) || cmp(a, b, 'name'));
+  else if (sort === 'cpw_asc') list.sort((a, b) => byPrice(costPerWear(a), costPerWear(b), 'price_asc') || cmp(a, b, 'name'));
   else if (sort === 'price_desc' || sort === 'price_asc') list.sort((a, b) => byPrice(itemPrice(a), itemPrice(b), sort) || cmp(a, b, 'name'));
   else list.sort((a, b) => cmp(a, b, sort));
   return list;
@@ -1603,7 +1604,7 @@ function byPrice(a, b, sort) {
 }
 const SORTS = {
   items: [['new', 'Neueste'], ['fav', 'Favoriten zuerst'], ['name', 'Name'], ['kategorie', 'Kategorie'], ['lagerort', 'Lagerort'], ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch'],
-    ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'], ['cpw', 'Preis pro Tragen']],
+    ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'], ['cpw', 'Preis pro Tragen: hoch'], ['cpw_asc', 'Preis pro Tragen: niedrig']],
   outfits: [['new', 'Neueste'], ['fav', 'Favoriten zuerst'], ['name', 'Name'], ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'],
     ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch']],
 };
@@ -1683,6 +1684,7 @@ function render() {
 }
 
 /* ---------------- Wunschliste ---------------- */
+const WISH_HIDDEN = ['kaufdatum', 'lagerort', 'zustand'];
 function renderWishes() {
   $('#filters').hidden = true;
   const list = filterItems($('#search').value, {}, $('#sort').value, wishes);
@@ -1958,7 +1960,7 @@ let ed = null; // { id, isNew, photos: [{id, isNew, full, thumb}], removed: [] ,
 
 function buildFieldInputs() {
   $('#fieldGrid').innerHTML = FIELDS.map((f) => {
-    const cls = `field${f.wide ? ' wide' : ''}`;
+    const cls = `field${f.wide ? ' wide' : ''}" data-field="${f.key}`;
     const alt = `<span class="hint legacy" id="alt-${f.key}" hidden></span>`;
     if (f.type === 'text') {
       return `<label class="${cls}">${esc(f.label)}<input name="${f.key}" list="dl-${f.key}" autocomplete="off"><datalist id="dl-${f.key}"></datalist>${alt}</label>`;
@@ -2178,11 +2180,8 @@ function openEditor(id = null, copyId = null) {
     form.elements[f.key].value = f.type === 'price' ? (hasValue(v) ? priceFmt.format(Number(v)) : '') : (v || '');
   }
   form.elements.notiz.value = it?.notiz || '';
-  if (!orig && !it) {
-    // Lagerort vom letzten Eintrag vorschlagen – spart Tipparbeit beim Durcherfassen
-    const last = JSON.parse(localStorage.getItem('ks_last') || '{}');
-    if (last.lagerort) form.elements.lagerort.value = last.lagerort;
-  }
+  // Wunschliste: Kaufdatum, Lagerort und Zustand gibt es (noch) nicht
+  for (const k of WISH_HIDDEN) $(`#fieldGrid [data-field="${k}"]`).hidden = ed.wunsch;
   $('#deleteBtn').hidden = !orig;
   $('#metaInfo').textContent = orig
     ? `Angelegt ${new Date(it.createdAt).toLocaleString('de-DE')} · geändert ${new Date(it.updatedAt).toLocaleString('de-DE')}`
@@ -2224,12 +2223,14 @@ async function saveEditor() {
   Object.assign(it, ed.kat);
   if (it.kategorie) delete it.kategorieAlt;
   if (!it.status) delete it.status; else delete it.waesche; // Aussortiertes ist nicht in der Wäsche
-  if (ed.wunsch) { it.wunsch = true; delete it.status; delete it.waesche; } else delete it.wunsch;
+  if (ed.wunsch) {
+    it.wunsch = true; delete it.status; delete it.waesche;
+    for (const k of WISH_HIDDEN) it[k] = '';
+  } else delete it.wunsch;
 
   if (!Object.keys(it.photoTags).length) delete it.photoTags;
   await storePhotos(ed, it.id);
   await DB.put('items', it);
-  localStorage.setItem('ks_last', JSON.stringify({ lagerort: it.lagerort }));
   ed = null;
   await loadState();
   await recountPending();
@@ -2610,6 +2611,7 @@ function itemRowsHtml(list, right) {
   return `<div class="rows">${list.map((it) => `<button type="button" class="orow" data-item="${esc(it.id)}">
     <span class="othumb">${photoCell(it)}</span><span><b>${esc(itemTitle(it))}</b><small>${esc(right(it))}</small></span></button>`).join('')}</div>`;
 }
+let statsCpwLow = localStorage.getItem('ks_cpw') === 'low';
 function renderStats() {
   const act = items.filter((it) => !it.status);
   if (!items.length) { $('#statsView').innerHTML = '<p class="muted">Noch keine Teile erfasst.</p>'; return; }
@@ -2631,7 +2633,9 @@ function renderStats() {
   const most = [...act].filter(wornCount).sort((a, b) => wornCount(b) - wornCount(a)).slice(0, 5);
   const never = act.filter((it) => !wornCount(it));
   const long = act.filter((it) => wornCount(it) && daysSince(lastWorn(it)) >= 90).sort((a, b) => lastWorn(a).localeCompare(lastWorn(b))).slice(0, 5);
-  const cpw = act.filter((it) => hasValue(it.preis) && Number(it.preis) > 0).sort((a, b) => costPerWear(b) - costPerWear(a)).slice(0, 5);
+  const cpwLow = statsCpwLow;
+  const cpw = act.filter((it) => hasValue(it.preis) && Number(it.preis) > 0)
+    .sort((a, b) => (cpwLow ? costPerWear(a) - costPerWear(b) : costPerWear(b) - costPerWear(a)) || itemTitle(a).localeCompare(itemTitle(b), 'de')).slice(0, 5);
   const gone = STATUS.map((s) => [s, items.filter((i) => i.status === s)]).filter(([, l]) => l.length);
   const tile = (v, l, filter) => `<button type="button" class="tile"${filter ? ` data-goto='${esc(JSON.stringify(filter))}'` : ' disabled'}><b>${esc(String(v))}</b><span>${esc(l)}</span></button>`;
   $('#statsView').innerHTML = `
@@ -2649,7 +2653,8 @@ function renderStats() {
     ${zustRows.length ? `<h3>Zustand</h3>${barsHtml(zustRows)}` : ''}
     ${most.length ? `<h3>Am häufigsten getragen</h3>${itemRowsHtml(most, (it) => `${wornCount(it)}× · zuletzt ${agoText(lastWorn(it))}`)}` : ''}
     ${long.length ? `<div class="sechead"><h3>Lange nicht getragen</h3><button type="button" class="chipbtn" data-goto='{"getragen":"90"}'>Alle anzeigen</button></div>${itemRowsHtml(long, (it) => `zuletzt ${agoText(lastWorn(it))} · ${wornCount(it)}×`)}` : ''}
-    ${cpw.length ? `<div class="sechead"><h3>Höchster Preis pro Tragen</h3><button type="button" class="chipbtn" data-goto-sort="cpw">Alle anzeigen</button></div>${itemRowsHtml(cpw, (it) => `${formatPrice(costPerWear(it))} pro Tragen · ${formatPrice(it.preis)}, ${wornCount(it)}× getragen`)}` : ''}
+    ${cpw.length ? `<div class="sechead"><h3>Preis pro Tragen</h3><button type="button" class="chipbtn" data-goto-sort="${cpwLow ? 'cpw_asc' : 'cpw'}">Alle anzeigen</button></div>
+      <div class="seg small cpwseg"><button type="button" data-cpw="high" class="${cpwLow ? '' : 'active'}">Höchster</button><button type="button" data-cpw="low" class="${cpwLow ? 'active' : ''}">Niedrigster</button></div>${itemRowsHtml(cpw, (it) => `${formatPrice(costPerWear(it))} pro Tragen · ${formatPrice(it.preis)}, ${wornCount(it)}× getragen`)}` : ''}
     ${gone.length ? `<h3>Nicht mehr im Schrank</h3>${barsHtml(gone.map(([s, l]) => [s, l.length, sum(l) ? `Kaufpreis ${formatPrice(sum(l))}` : '']))}` : ''}
     <p class="hint">Gezählt werden Teile im Schrank, also ohne Aussortierte, Verkaufte und Verschenkte. Noch nie getragene Teile zählen beim Preis pro Tragen mit vollem Preis.</p>`;
 }
@@ -2773,6 +2778,8 @@ function wirePlanner() {
   $('#statsView').addEventListener('click', (e) => {
     const g = e.target.closest('[data-goto]');
     if (g) return gotoItems(JSON.parse(g.dataset.goto));
+    const c = e.target.closest('[data-cpw]');
+    if (c) { statsCpwLow = c.dataset.cpw === 'low'; localStorage.setItem('ks_cpw', c.dataset.cpw); return renderStats(); }
     const s = e.target.closest('[data-goto-sort]');
     if (s) return gotoItems({}, s.dataset.gotoSort);
     const r = e.target.closest('[data-item]');

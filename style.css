@@ -510,3 +510,4 @@ body[data-tab="wish"] #filterToggle, body[data-tab="wish"] #filters { display: n
 .buybox .primary { width: 100%; padding: 12px; }
 .buybox .hint { display: block; margin-bottom: 0; }
 .tabbar button span { white-space: nowrap; font-size: 11px; }
+.cpwseg { margin-bottom: 8px; }
