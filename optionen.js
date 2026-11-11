@@ -13,7 +13,7 @@ const FARBEN = [
   ['Jeansblau', 'repeating-linear-gradient(45deg,#7f9cbf 0 2px,#6d8bb0 2px 4px)'], ['Dunkelblau', '#00007a'],
   ['Lavendel', '#e7e6f8'], ['Violett', '#922ce7'],
   ['Pink', '#eb33f7'], ['Knallrosa', '#ee73b2'], ['Rosa', '#e79dac'], ['Hellrosa', '#f6cdd3'],
-  ['Weiß', '#ffffff'], ['Ecru', '#f6f3e4'], ['Beige', '#e6dbc7'], ['Braun', '#8c4f19'], ['Grau', '#808080'], ['Schwarz', '#000000'],
+  ['Weiß', '#ffffff'], ['Ecru', '#f6f3e4'], ['Beige', '#e6dbc7'], ['Hellbraun', '#b8865b'], ['Braun', '#8c4f19'], ['Grau', '#808080'], ['Schwarz', '#000000'],
   ['Schwarzes Denim', 'repeating-linear-gradient(45deg,#2b2b2b 0 2px,#121212 2px 4px)'],
   ['Gold', 'linear-gradient(120deg,#f2f197,#c9a23a 55%,#f0e08a)'],
   ['Silber', 'linear-gradient(120deg,#f2f2f2,#9a9a9a 55%,#e0e0e0)'],

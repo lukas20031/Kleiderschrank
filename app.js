@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.12.3';
+const APP_VERSION = '2.13.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1691,7 +1691,7 @@ async function sync() {
     if (await purgeOldTrash()) await loadState();
     await recountPending();
     render();
-    if (!outdatedShown) hideBanner(); // Hinweis auf neuere Version bleibt stehen
+    hideBanner(); // erledigte Hinweise (z. B. abgelaufene Anmeldung) ausblenden – Update-Hinweise bleiben stehen
     updateSyncIndicator();
   } catch (e) {
     console.error(e);
@@ -3628,6 +3628,49 @@ async function shareOutfit(id) {
   toast('Bild heruntergeladen');
 }
 
+/* ---------------- Bilder per Drag & Drop (Laptop) ---------------- */
+const isFileDrag = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+const droppedImages = (e) => [...(e.dataTransfer?.files || [])].filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(f.name));
+/** Wohin gehört ein abgelegtes Bild? Teil- oder Outfit-Editor, sonst ein neues Teil / ein neuer Wunsch */
+function dropTarget() {
+  if ($('#cropDlg').open || $('#photoDlg').open) return null; // während der Bildbearbeitung nicht
+  if ($('#editor').open) return 'item';
+  if ($('#outfitEditor').open) return 'outfit';
+  if (document.querySelector('dialog[open]')) return null;
+  return tab === 'items' || tab === 'wish' ? 'new' : null;
+}
+function wireDrop() {
+  let depth = 0;
+  const hint = $('#dropHint');
+  const show = (on) => {
+    const t = on ? dropTarget() : null;
+    hint.hidden = !t;
+    if (t) hint.textContent = t === 'outfit' ? 'Bilder hier ablegen – als Fotos vom Outfit' : t === 'new' ? `Bilder hier ablegen – ${tab === 'wish' ? 'neuer Wunsch' : 'neues Teil'} mit diesen Fotos` : 'Bilder hier ablegen – als Fotos dieses Teils';
+    // Hinweis über dem obersten offenen Dialog anzeigen
+    const top = [...document.querySelectorAll('dialog[open]')].pop();
+    (top || document.body).append(hint);
+  };
+  document.addEventListener('dragenter', (e) => { if (!isFileDrag(e)) return; e.preventDefault(); depth++; show(true); });
+  document.addEventListener('dragleave', (e) => { if (!isFileDrag(e)) return; depth = Math.max(0, depth - 1); if (!depth) show(false); });
+  document.addEventListener('dragover', (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault(); // sonst öffnet der Browser das Bild statt es abzulegen
+    e.dataTransfer.dropEffect = dropTarget() ? 'copy' : 'none';
+  });
+  document.addEventListener('drop', async (e) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+    depth = 0; show(false);
+    const t = dropTarget();
+    const files = droppedImages(e);
+    if (!t) return;
+    if (!files.length) return toast('Nur Bilddateien können abgelegt werden.');
+    if (t === 'new') openEditor();
+    phCtx = t === 'outfit' ? oed : ed;
+    await trackPhoto(addPhotos(files));
+  });
+}
+
 /* ---------------- Einstellungen ---------------- */
 function renderSettings() {
   $('#trashBtn').textContent = `Papierkorb${trashCount() ? ` (${trashCount()})` : ''}`;
@@ -3750,15 +3793,22 @@ function outdatedApp() {
   if (outdatedShown) return;
   outdatedShown = true;
   swReg?.update().catch(() => {});
-  showBanner('Auf einem anderen Gerät läuft eine neuere Version der App. Tippe hier, um zu aktualisieren.', () => location.reload());
+  showBanner('Auf einem anderen Gerät läuft eine neuere Version der App. Tippe hier, um zu aktualisieren.', () => location.reload(), true);
 }
-function showBanner(text, action) {
+let bannerSticky = false;
+/** sticky: bleibt stehen, bis man darauf tippt (Update-Hinweise) */
+function showBanner(text, action, sticky = false) {
+  if (bannerSticky && !sticky) return; // ein Update-Hinweis hat Vorrang
   const b = $('#banner');
   b.textContent = text;
   b.hidden = false;
   bannerAction = action;
+  bannerSticky = sticky;
 }
-function hideBanner() { $('#banner').hidden = true; bannerAction = null; }
+function hideBanner(force = false) {
+  if (bannerSticky && !force) return;
+  $('#banner').hidden = true; bannerAction = null; bannerSticky = false;
+}
 
 /* ---------------- Ereignisse ---------------- */
 function wireEvents() {
@@ -4099,6 +4149,7 @@ function wireEvents() {
     phCtx = ed;
     await trackPhoto(addPhotos(files));
   });
+  wireDrop();
   $('#anlassChips').addEventListener('click', (e) => {
     const a = e.target.dataset.anlass;
     if (!a) return;
@@ -4322,7 +4373,7 @@ async function registerSW() {
     if (!hadController) { hadController = true; return; }
     if (reloading) return;
     const busy = document.querySelector('dialog[open]') || photoTasks.size || syncing;
-    if (busy) return showBanner('Eine neue Version der App ist da. Tippe hier, um sie zu laden.', () => location.reload());
+    if (busy) return showBanner('Eine neue Version der App ist da. Tippe hier, um sie zu laden.', () => location.reload(), true);
     reloading = true;
     location.reload();
   });
