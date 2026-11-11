@@ -572,3 +572,16 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 18px 0 0; }
 .bgsw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid #555; padding: 0; position: relative; }
 .bgsw.on { border-color: #9fe0d5; box-shadow: 0 0 0 2px #9fe0d5; }
 .bgsw:not(.on)::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px; background: #ff8a73; transform: rotate(45deg); }
+
+/* Zoom im Foto-Editor */
+.cropwrap { transform-origin: 0 0; will-change: transform; }
+.cropwrap.zooming { cursor: grab; }
+.cropwrap.zooming .cropbox { display: none; }
+.zoomval { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
+#zoomRow .chipbtn { padding: 4px 10px; font-size: 13px; white-space: nowrap; }
+#cropTools [data-tool="zoom"].zoomed:not(.active) { color: #9fe0d5; }
+/* Werkzeugleiste darf nicht breiter als der Bildschirm werden */
+.croptools { grid-template-columns: minmax(0, 1fr); }
+.croptools .seg.tools { min-width: 0; }
+.croptools .seg.tools button { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; padding: 9px 1px; }
+#zoomRow { gap: 8px; }

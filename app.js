@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.9.7';
+const APP_VERSION = '2.9.8';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1057,7 +1057,7 @@ function centerMask(prep, tol, W, H) {
 
 const Crop = {
   base: null, mask: null, comp: null, rect: null, ratio: null, scale: 1, drag: null, resolve: null,
-  tool: 'crop', brush: 40, undo: [], colorPrep: {}, colorMode: 'center', tols: { center: 65, edge: 28 },
+  tool: 'crop', zoom: 1, tx: 0, ty: 0, pointers: new Map(), brush: 40, undo: [], colorPrep: {}, colorMode: 'center', tols: { center: 65, edge: 28 },
 
   get src() { return this.mask ? this.comp : this.base; },
   get transparent() { return !!this.mask || this.baseTransparent; },
@@ -1160,8 +1160,31 @@ const Crop = {
     const cv = $('#cropCanvas');
     cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
     cv.style.width = cw + 'px'; cv.style.height = ch + 'px';
+    this.cw = cw; this.ch = ch;
+    this.setZoom(1);
     this.redraw();
     this.drawBox();
+  },
+  /* Zoom: nur die Ansicht wird vergrößert (CSS-Transform), das Bild selbst bleibt unverändert */
+  setZoom(z, sx = null, sy = null) {
+    const wrap = $('#cropWrap');
+    z = Math.max(1, Math.min(8, z));
+    const r = wrap.getBoundingClientRect();
+    const ox = r.left - this.tx, oy = r.top - this.ty;          // Lage ohne Verschiebung
+    if (sx === null) { sx = ox + this.cw / 2; sy = oy + this.ch / 2; }
+    // Punkt unter dem Finger bzw. in der Mitte bleibt an seiner Stelle
+    const px = (sx - ox - this.tx) / this.zoom, py = (sy - oy - this.ty) / this.zoom;
+    this.zoom = z;
+    this.pan(sx - ox - z * px, sy - oy - z * py);
+  },
+  pan(tx, ty) {
+    const z = this.zoom;
+    this.tx = Math.min(0, Math.max(this.cw - z * this.cw, tx));
+    this.ty = Math.min(0, Math.max(this.ch - z * this.ch, ty));
+    $('#cropWrap').style.transform = z === 1 ? '' : `translate(${this.tx}px, ${this.ty}px) scale(${z})`;
+    $('#zoomSlider').value = Math.round(z * 100);
+    $('#zoomValue').textContent = `${Math.round(z * 100)} %`;
+    $('#cropTools [data-tool="zoom"]').classList.toggle('zoomed', z > 1);
   },
   redraw() {
     const cv = $('#cropCanvas');
@@ -1209,9 +1232,12 @@ const Crop = {
   setTool(t) {
     this.tool = t;
     for (const b of $('#cropTools').children) b.classList.toggle('active', b.dataset.tool === t);
-    $('#cropWrap').classList.toggle('painting', t !== 'crop');
-    $('#brushRow').hidden = t === 'crop';
+    $('#cropWrap').classList.toggle('painting', t === 'restore' || t === 'erase');
+    $('#cropWrap').classList.toggle('zooming', t === 'zoom');
+    $('#brushRow').hidden = !(t === 'restore' || t === 'erase');
+    $('#zoomRow').hidden = t !== 'zoom';
     $('#cropRatio').hidden = t !== 'crop';
+    this.pointers.clear();
   },
   updateTools() {
     $('#cropUndo').disabled = this.busy || !this.undo.length;
@@ -1227,10 +1253,18 @@ const Crop = {
   // Ziehen: Rahmen verschieben/größer ziehen – oder mit dem Pinsel malen
   pos(e) {
     const r = $('#cropCanvas').getBoundingClientRect();
-    return { x: (e.clientX - r.left) / this.scale, y: (e.clientY - r.top) / this.scale };
+    const s = this.scale * this.zoom;
+    return { x: (e.clientX - r.left) / s, y: (e.clientY - r.top) / s };
   },
   down(e) {
     if (this.busy) return;
+    if (this.tool === 'zoom') {
+      e.preventDefault();
+      try { $('#cropWrap').setPointerCapture?.(e.pointerId); } catch { /* egal */ }
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this.gesture = null;
+      return;
+    }
     if (this.tool !== 'crop') {
       e.preventDefault();
       $('#cropWrap').setPointerCapture?.(e.pointerId);
@@ -1256,7 +1290,7 @@ const Crop = {
     ctx.globalCompositeOperation = this.tool === 'erase' ? 'destination-out' : 'source-over';
     ctx.strokeStyle = ctx.fillStyle = '#fff';
     ctx.lineCap = ctx.lineJoin = 'round';
-    ctx.lineWidth = this.brush / this.scale;
+    ctx.lineWidth = this.brush / (this.scale * this.zoom); // Pinsel bleibt auf dem Bildschirm gleich groß → beim Zoomen feiner
     ctx.beginPath();
     ctx.moveTo(this.paintLast.x, this.paintLast.y);
     ctx.lineTo(p.x + 0.01, p.y);
@@ -1266,10 +1300,28 @@ const Crop = {
     if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.composite(); this.redraw(); });
   },
   move(e) {
+    if (this.tool === 'zoom' && this.pointers.has(e.pointerId)) {
+      const prev = this.pointers.get(e.pointerId);
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const pts = [...this.pointers.values()];
+      if (pts.length >= 2) {
+        // Zwei Finger: zoomen um die Mitte zwischen den Fingern und gleichzeitig verschieben
+        const [a, b] = pts;
+        const dist = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        if (this.gesture) {
+          this.pan(this.tx + mx - this.gesture.mx, this.ty + my - this.gesture.my);
+          this.setZoom(this.zoom * dist / this.gesture.dist, mx, my);
+        }
+        this.gesture = { dist, mx, my };
+      } else {
+        this.pan(this.tx + e.clientX - prev.x, this.ty + e.clientY - prev.y); // ein Finger: verschieben
+      }
+      return;
+    }
     if (this.painting) { this.paint(this.pos(e)); return; }
     const d = this.drag;
     if (!d) return;
-    const W = this.base.width, H = this.base.height, s = this.scale;
+    const W = this.base.width, H = this.base.height, s = this.scale * this.zoom;
     const dx = (e.clientX - d.px) / s, dy = (e.clientY - d.py) / s;
     const r0 = d.r, min = 48 / s;
     const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1287,7 +1339,8 @@ const Crop = {
     }
     this.drawBox();
   },
-  up() {
+  up(e) {
+    if (e) { this.pointers.delete(e.pointerId); this.gesture = null; }
     this.drag = null;
     if (this.painting) { this.painting = false; this.composite(); this.redraw(); }
   },
@@ -3830,8 +3883,16 @@ function wireEvents() {
   $('#cropRatio').addEventListener('click', (e) => { const b = e.target.closest('[data-r]'); if (b) Crop.setRatio(Number(b.dataset.r) || null); });
   $('#cropWrap').addEventListener('pointerdown', (e) => Crop.down(e));
   window.addEventListener('pointermove', (e) => Crop.move(e));
-  window.addEventListener('pointerup', () => Crop.up());
-  window.addEventListener('pointercancel', () => Crop.up());
+  window.addEventListener('pointerup', (e) => Crop.up(e));
+  window.addEventListener('pointercancel', (e) => Crop.up(e));
+  $('#zoomSlider').addEventListener('input', (e) => Crop.setZoom(Number(e.target.value) / 100));
+  $('#zoomReset').addEventListener('click', () => Crop.setZoom(1));
+  // Mausrad / Touchpad: zoomen am Mauszeiger
+  $('#cropStage').addEventListener('wheel', (e) => {
+    if (!$('#cropDlg').open || Crop.busy) return;
+    e.preventDefault();
+    Crop.setZoom(Crop.zoom * Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+  }, { passive: false });
   window.addEventListener('resize', () => { if ($('#cropDlg').open) Crop.layout(); });
 
   $('#photoInput').addEventListener('change', async (e) => {

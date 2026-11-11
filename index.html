@@ -222,11 +222,18 @@
     <div class="bgswatches" id="bgSwatches" hidden></div>
     <div class="row">
       <div class="seg tools" id="cropTools">
-        <button type="button" data-tool="crop" class="active">✂ Rahmen</button>
-        <button type="button" data-tool="restore">🖌 Zurückholen</button>
-        <button type="button" data-tool="erase">🧽 Entfernen</button>
+        <button type="button" data-tool="crop" class="active">Rahmen</button>
+        <button type="button" data-tool="zoom">Zoom</button>
+        <button type="button" data-tool="restore">Zurückholen</button>
+        <button type="button" data-tool="erase">Entfernen</button>
       </div>
       <button type="button" class="chipbtn" id="cropUndo" disabled aria-label="Rückgängig">↶</button>
+    </div>
+    <div class="slider" id="zoomRow" hidden>
+      <span>Zoom</span>
+      <input type="range" id="zoomSlider" min="100" max="800" step="10" value="100" aria-label="Zoomstufe">
+      <span id="zoomValue" class="zoomval">100 %</span>
+      <button type="button" class="chipbtn" id="zoomReset">Ganzes Bild</button>
     </div>
     <div class="slider" id="brushRow" hidden>
       <span>Pinsel</span>
