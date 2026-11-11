@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.10.1';
+const APP_VERSION = '2.10.2';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1142,7 +1142,8 @@ const Crop = {
     this.mask = m;
     this.composite();
     if (autoCrop && m) this.autoCrop(); else if (!m) this.resetRect();
-    this.layout();
+    this.redraw();
+    this.drawBox();
     this.updateTools();
   },
   pushUndo() {
@@ -1374,21 +1375,45 @@ const Crop = {
 
   /** Farbbasiertes Freistellen (fast sofort, ohne Download):
    *  'center' = Motiv in der Mitte, 'edge' = einfarbiger Untergrund */
+  /** Nur der Bereich innerhalb des Rahmens wird beurteilt. Bei neuem Rahmen wird neu analysiert. */
+  region() {
+    const r = this.rect;
+    const x = Math.round(r.x), y = Math.round(r.y), w = Math.round(r.w), h = Math.round(r.h);
+    const key = `${x},${y},${w},${h}`;
+    if (this.colorPrep.key !== key) {
+      const full = x === 0 && y === 0 && w === this.base.width && h === this.base.height;
+      let src = this.base;
+      if (!full) { src = newCanvas(w, h); src.getContext('2d').drawImage(this.base, x, y, w, h, 0, 0, w, h); }
+      this.colorPrep = { key, x, y, w, h, src };
+    }
+    return this.colorPrep;
+  },
+  /** Maske des Rahmen-Bereichs in eine Maske für das ganze Bild einsetzen (außerhalb = entfernt) */
+  setRegionMask(m) {
+    const g = this.colorPrep;
+    let full = m;
+    if (g.w !== this.base.width || g.h !== this.base.height) {
+      full = newCanvas(this.base.width, this.base.height);
+      full.getContext('2d').drawImage(m, g.x, g.y);
+    }
+    this.setMask(full, { autoCrop: false }); // Rahmen bleibt, wo er ist
+  },
   applyColor(push = true) {
     if (push) this.pushUndo();
-    const mode = this.colorMode, W = this.base.width, H = this.base.height;
+    const mode = this.colorMode;
+    const g = this.region(), W = g.w, H = g.h;
     if (mode === 'center') {
       if (!this.colorPrep.center) {
-        this.colorPrep.center = prepareCenterMask(this.base);
+        this.colorPrep.center = prepareCenterMask(g.src);
         // Für jedes neue Foto passende Toleranz automatisch bestimmen (auf kleinerer Auflösung, schnell)
-        this.tols.center = autoCenterTol(prepareCenterMask(this.base, 350));
+        this.tols.center = autoCenterTol(prepareCenterMask(g.src, 350));
         $('#colorTol').value = this.tols.center;
       }
-      this.setMask(centerMask(this.colorPrep.center, this.tols.center, W, H));
+      this.setRegionMask(centerMask(this.colorPrep.center, this.tols.center, W, H));
     } else {
-      this.colorPrep.edge ??= prepareColorMask(this.base);
+      this.colorPrep.edge ??= prepareColorMask(g.src);
       const prep = this.colorPrep.edge;
-      this.setMask(colorMask(prep, this.tols.edge, W, H));
+      this.setRegionMask(colorMask(prep, this.tols.edge, W, H));
       if (prep.usedTol !== this.tols.edge) { this.tols.edge = prep.usedTol; $('#colorTol').value = prep.usedTol; }
       if (prep.fixed) toast(prep.fixed === 'farben' ? 'Eine Randfarbe gehörte zum Teil – sie wird nicht mehr als Untergrund gewertet.' : 'Toleranz verringert, damit das Teil erhalten bleibt.');
     }
@@ -1410,7 +1435,7 @@ const Crop = {
     prep.clusters[i].on = !prep.clusters[i].on;
     colorDist(prep);
     this.pushUndo();
-    this.setMask(colorMask(prep, this.tols.edge, this.base.width, this.base.height));
+    this.setRegionMask(colorMask(prep, this.tols.edge, this.colorPrep.w, this.colorPrep.h));
     if (prep.usedTol !== this.tols.edge) { this.tols.edge = prep.usedTol; $('#colorTol').value = prep.usedTol; }
     this.renderBgSwatches();
   },
