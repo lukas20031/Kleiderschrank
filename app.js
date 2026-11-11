@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.9.8';
+const APP_VERSION = '2.10.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -62,7 +62,24 @@ const fieldText = (it, key) => {
   return fieldValues(it, key).join(', ');
 };
 const swatch = (name) => `<span class="sw" style="background:${FARB_MAP.get(name) || '#ccc'}"></span>`;
-const DATA_VERSION = 2;
+const DATA_VERSION = 5;
+/* Umbau der Shirts (Version 3/4): „T-Shirts“ heißt jetzt „Kurzarmshirts“, Langarm-Shirts haben eine eigene
+ * Unterkategorie, Poloshirt ist nach Ärmellänge getrennt, doppelte Arten sind zusammengelegt. */
+const SHIRT_MOVES = {
+  'Langarmshirt': ['Langarmshirts', 'Langarmshirt'],
+  'Langarmshirt mit V-Ausschnitt': ['Langarmshirts', 'Langarmshirt mit V-Ausschnitt'],
+  'Grafik-Langarmshirt': ['Langarmshirts', 'Grafik-Langarmshirt'],
+  'Poloshirt': ['Kurzarmshirts', 'Poloshirt kurzärmlig'],
+  'V-Ausschnitt': ['Kurzarmshirts', 'T-Shirt mit V-Ausschnitt'],
+  'Grafik-Kurzarmshirt': ['Kurzarmshirts', 'Grafik-T-Shirt'],
+  'Kurzarmshirt': ['Kurzarmshirts', 'T-Shirt'],
+};
+/** Alte Unterkategorie/Art aus „T-Shirts“ in die neue Einteilung übersetzen (sonst unverändert) */
+function moveShirt(kat, sub, typ) {
+  if (kat === 'Oberteile' && sub === 'Kurzarmshirts' && typ === 'Kurzarmshirt') return ['Kurzarmshirts', 'T-Shirt'];
+  if (kat !== 'Oberteile' || sub !== 'T-Shirts') return null;
+  return SHIRT_MOVES[typ] || ['Kurzarmshirts', typ || ''];
+}
 
 /* Kategorien: feste Liste aus kategorien.js, gespeichert als drei Felder */
 const CAT_KEYS = [
@@ -164,6 +181,8 @@ async function migrateItems(list) {
       const m = matchOption('zustand', it.zustand);
       if (m) upd.zustand = m; else { alt.zustand = it.zustand; upd.zustand = ''; }
     }
+    const mv = moveShirt(upd.kategorie, upd.unterkategorie, upd.typ);
+    if (mv) [upd.unterkategorie, upd.typ] = mv;
     if (Object.keys(alt).length) upd.alt = alt; else delete upd.alt;
     await DB.put('items', upd);
     Object.assign(it, upd);
@@ -4039,7 +4058,20 @@ function wireEvents() {
 }
 
 /* ---------------- Start ---------------- */
+/** Gespeicherte Filter auf die neue Shirt-Einteilung umstellen */
+function migrateSavedFilters() {
+  for (const key of ['ks_filters', 'ks_wfilters']) {
+    const f = readJson(key, null);
+    if (!f || !['T-Shirts', 'Kurzarmshirts'].includes(f.unterkategorie)) continue;
+    const mv = moveShirt(f.kategorie || 'Oberteile', f.unterkategorie, f.typ);
+    if (!mv) continue;
+    f.unterkategorie = mv[0]; if (f.typ) f.typ = mv[1];
+    localStorage.setItem(key, JSON.stringify(f));
+    if (key === 'ks_filters') Object.assign(filters, f); else Object.assign(wishFilters, f);
+  }
+}
 async function init() {
+  migrateSavedFilters();
   // Version 1.0 kannte nur OneDrive
   if (localStorage.getItem('ks_clientId') && !localStorage.getItem('ks_provider')) {
     localStorage.setItem('ks_provider', 'onedrive');

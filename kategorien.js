@@ -3,7 +3,8 @@
 const KATEGORIEN = [
   ['Oberteile', [
     ['Hemden', ['Langarmhemd', 'Kurzarmhemd', 'Bluse', 'Dreiviertelarm-Hemd']],
-    ['T-Shirts', ['T-Shirt', 'V-Ausschnitt', 'Langarmshirt', 'Grafik-T-Shirt', 'Poloshirt', 'Kurzarmshirt', 'T-Shirt mit V-Ausschnitt', 'Langarmshirt mit V-Ausschnitt', 'Grafik-Kurzarmshirt', 'Grafik-Langarmshirt', 'Dreiviertelarm-Shirt']],
+    ['Kurzarmshirts', ['T-Shirt', 'T-Shirt mit V-Ausschnitt', 'Grafik-T-Shirt', 'Poloshirt kurzärmlig', 'Dreiviertelarm-Shirt']],
+    ['Langarmshirts', ['Langarmshirt', 'Langarmshirt mit V-Ausschnitt', 'Grafik-Langarmshirt', 'Poloshirt langärmlig']],
     ['Top', ['Weste', 'Unterhemd', 'Croptop', 'Bustier', 'Crop-Weste', 'Schößchen-Top', 'Korsett-Top', 'Neckholder-Top', 'Bandeau-Top', 'Tanktop']],
     ['Pullover und Strickjacken', ['Pullover', 'Pullover mit Zopfmuster', 'Sweatshirtjacke', 'Sweatshirtweste', 'Stehkragen', 'Rollkragen', 'Strickjacke', 'Shrug', 'Bolero']],
     ['Hoodies & Sweatshirts', ['Hoodie', 'Sweatjacke', 'Fleece', 'Sweatshirt']],
