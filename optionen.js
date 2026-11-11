@@ -24,13 +24,13 @@ const FARBEN = [
 
 // Materialien (übernommen aus Whering)
 const MATERIALIEN = [
-  'Acryl', 'Alpaka', 'Bambus', 'Baumwolle', 'Bouclé', 'Bronze', 'Canvas', 'Chiffon', 'Cord', 'Crêpe',
-  'Denim', 'Diamant', 'Edelstein', 'Elastan', 'Fell', 'Glas', 'Gold', 'Gummi', 'Hanf', 'Holz',
+  'Acryl', 'Alpaka', 'Aluminium', 'Bambus', 'Baumwolle', 'Bouclé', 'Bronze', 'Canvas', 'Chiffon', 'Cord', 'Crêpe',
+  'Denim', 'Diamant', 'Edelstahl', 'Edelstein', 'Eisen', 'Elastan', 'Fell', 'Glas', 'Gold', 'Gummi', 'Hanf', 'Holz',
   'Häkelstrick', 'Kaschmir', 'Keramik', 'Kobalt', 'Kunstfell', 'Kupfer', 'Lackleder', 'Leder', 'Leinen', 'Lycra',
-  'Lyocell', 'Mesh', 'Metall', 'Modal', 'Neopren', 'Nylon', 'Pailletten', 'Perle', 'Plastik', 'Polyamid',
+  'Lyocell', 'Mesh', 'Messing', 'Metall', 'Modal', 'Neopren', 'Nylon', 'Pailletten', 'Perle', 'Plastik', 'Polyamid',
   'Polyester', 'Polyurethan', 'Rayon', 'Samt', 'Satin', 'Seide', 'Silber', 'Smaragd', 'Spandex', 'Spitze',
   'Strick', 'Stroh', 'Synthetik', 'Teddy', 'Tencel', 'Titan', 'Tweed', 'Tüll', 'Veganes Leder', 'Viskose',
-  'Wildleder', 'Wolle',
+  'Wildleder', 'Wolle', 'Zink',
 ];
 
 // Größen – je Gruppe von klein nach groß
