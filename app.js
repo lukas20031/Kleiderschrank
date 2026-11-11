@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.7.1';
+const APP_VERSION = '2.8.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1695,7 +1695,8 @@ function render() {
   if (tab === 'plan' || tab === 'stats') {
     $('#grid').innerHTML = ''; $('#count').textContent = ''; $('#empty').hidden = true; $('#emptyOutfits').hidden = true; $('#emptyWish').hidden = true;
     $('#viewChips').hidden = true;
-    return tab === 'plan' ? renderPlan() : renderStats();
+    if (tab === 'plan') { renderPlan(); return weatherOnPlan(); }
+    return renderStats();
   }
   renderSortOptions();
   renderViewChips();
@@ -2521,6 +2522,7 @@ function renderPlan() {
   const upcoming = outfits.flatMap((o) => (o.geplant || []).filter((d) => d >= today).map((d) => [d, o])).sort((a, b) => a[0].localeCompare(b[0])).slice(0, 5);
   const packs = [...packlists].sort((a, b) => String(a.von || '9999').localeCompare(String(b.von || '9999')) || String(b.createdAt).localeCompare(String(a.createdAt)));
   $('#planView').innerHTML = `
+    <div id="wxBox" class="wxcard">${weatherCardInner()}</div>
     <div class="cal">
       <div class="calhead"><button type="button" class="iconbtn" data-cal="-1" aria-label="Voriger Monat">‹</button>
         <h3>${MONTHS[m]} ${y}</h3>
@@ -2558,7 +2560,7 @@ function renderDay() {
   const single = itemsWornOn(d).filter((it) => !inOutfits.has(it.id));
   const orow = (o, btns) => `<div class="orow"><button type="button" class="othumb" data-open-outfit="${esc(o.id)}">${firstPhoto(o) || '<span class="ph">–</span>'}</button>
     <button type="button" class="otitle" data-open-outfit="${esc(o.id)}">${esc(outfitTitle(o))}</button>${btns}</div>`;
-  $('#dayBody').innerHTML = `
+  $('#dayBody').innerHTML = `${dayWeatherHtml(d)}
     <h3>Geplant</h3>
     ${plan.map((o) => orow(o, `${future ? '' : `<button type="button" class="chipbtn" data-day-wear="${esc(o.id)}">Getragen</button>`}
       <button type="button" class="x" data-day-unplan="${esc(o.id)}" aria-label="Nicht mehr einplanen">✕</button>`)).join('') || '<p class="muted">Nichts geplant.</p>'}
@@ -2831,6 +2833,149 @@ function wirePlanner() {
     const r = e.target.closest('[data-item]');
     if (r) openDetail(r.dataset.item);
   });
+}
+
+/* ---------------- Wetter (Open-Meteo, ohne Konto/Schlüssel) ---------------- */
+const WX_CODES = {
+  0: ['☀️', 'Klar'], 1: ['🌤️', 'Überwiegend klar'], 2: ['⛅', 'Teilweise bewölkt'], 3: ['☁️', 'Bedeckt'],
+  45: ['🌫️', 'Nebel'], 48: ['🌫️', 'Reifnebel'],
+  51: ['🌦️', 'Leichter Nieselregen'], 53: ['🌦️', 'Nieselregen'], 55: ['🌧️', 'Starker Nieselregen'],
+  56: ['🌧️', 'Gefrierender Nieselregen'], 57: ['🌧️', 'Gefrierender Nieselregen'],
+  61: ['🌦️', 'Leichter Regen'], 63: ['🌧️', 'Regen'], 65: ['🌧️', 'Starker Regen'],
+  66: ['🌧️', 'Gefrierender Regen'], 67: ['🌧️', 'Gefrierender Regen'],
+  71: ['🌨️', 'Leichter Schneefall'], 73: ['🌨️', 'Schneefall'], 75: ['❄️', 'Starker Schneefall'], 77: ['🌨️', 'Schneegriesel'],
+  80: ['🌦️', 'Regenschauer'], 81: ['🌧️', 'Kräftige Regenschauer'], 82: ['⛈️', 'Heftige Regenschauer'],
+  85: ['🌨️', 'Schneeschauer'], 86: ['🌨️', 'Starke Schneeschauer'],
+  95: ['⛈️', 'Gewitter'], 96: ['⛈️', 'Gewitter mit Hagel'], 99: ['⛈️', 'Gewitter mit Hagel'],
+};
+const WX_FORECAST_DAYS = 16;
+const readJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+let wxLoc = readJson('ks_wxloc', null);     // { mode: 'gps' | 'ort', lat, lon, name }
+let wxData = readJson('ks_wx', null);       // { key, at, days: { 'JJJJ-MM-TT': { code, max, min, pop } } }
+const wx = { loading: false, error: '', edit: false, results: null, gpsChecked: false };
+const wxKey = () => (wxLoc ? `${wxLoc.lat},${wxLoc.lon}` : '');
+const wxDay = (d) => (wxData && wxData.key === wxKey() ? wxData.days[d] : null);
+const round2 = (n) => Math.round(n * 100) / 100;
+function wxText(w, long = true) {
+  const [ico, txt] = WX_CODES[w.code] || ['🌡️', 'Wetter'];
+  const t = `${Math.round(w.max)}° / ${Math.round(w.min)}°`;
+  const rain = w.pop === null || w.pop === undefined ? '' : `💧 ${w.pop} %`;
+  return { ico, txt, t, rain, line: [long ? txt : '', t, rain ? `Regen ${w.pop} %` : ''].filter(Boolean).join(' · ') };
+}
+async function loadWeather(force = false) {
+  if (!wxLoc || wx.loading) return;
+  if (!force && wxData?.key === wxKey() && Date.now() - wxData.at < 60 * 60 * 1000 && wxData.day === isoDay()) return;
+  if (!navigator.onLine) { wx.error = 'offline'; return refreshWeatherViews(); }
+  wx.loading = true; wx.error = '';
+  refreshWeatherViews();
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${wxLoc.lat}&longitude=${wxLoc.lon}`
+      + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'
+      + `&timezone=auto&past_days=31&forecast_days=${WX_FORECAST_DAYS}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const d = j.daily || {};
+    const days = {};
+    (d.time || []).forEach((t, i) => {
+      if (d.temperature_2m_max[i] === null) return;
+      days[t] = { code: d.weather_code[i], max: d.temperature_2m_max[i], min: d.temperature_2m_min[i], pop: d.precipitation_probability_max?.[i] ?? null };
+    });
+    wxData = { key: wxKey(), at: Date.now(), day: isoDay(), days };
+    localStorage.setItem('ks_wx', JSON.stringify(wxData));
+  } catch (e) {
+    console.warn('Wetter', e);
+    wx.error = 'fehler';
+  } finally {
+    wx.loading = false;
+    refreshWeatherViews();
+  }
+}
+function refreshWeatherViews() {
+  if (tab === 'plan' && $('#wxBox')) $('#wxBox').innerHTML = weatherCardInner();
+  if ($('#dayDlg').open && dayOpen) { const b = $('#dayWx'); if (b) b.outerHTML = dayWeatherHtml(dayOpen); }
+}
+function setWxLoc(loc) {
+  wxLoc = loc;
+  localStorage.setItem('ks_wxloc', JSON.stringify(loc));
+  wx.edit = false; wx.results = null;
+  loadWeather(true);
+}
+/** Aktuellen Standort holen; silent = nur wenn die Berechtigung schon erteilt ist (keine Nachfrage) */
+async function useGps(silent = false) {
+  if (!navigator.geolocation) { if (!silent) toast('Dieses Gerät kann keinen Standort liefern – gib bitte einen Ort ein.'); return; }
+  if (silent) {
+    try { if ((await navigator.permissions?.query({ name: 'geolocation' }))?.state !== 'granted') return; } catch { return; }
+  }
+  navigator.geolocation.getCurrentPosition((pos) => {
+    const lat = round2(pos.coords.latitude), lon = round2(pos.coords.longitude);
+    if (silent && wxLoc && Math.abs(wxLoc.lat - lat) < 0.05 && Math.abs(wxLoc.lon - lon) < 0.05) return loadWeather();
+    setWxLoc({ mode: 'gps', lat, lon, name: 'Aktueller Standort' });
+  }, () => {
+    if (!silent) toast('Standort nicht verfügbar oder nicht erlaubt – du kannst stattdessen einen Ort eingeben.');
+  }, { maximumAge: 30 * 60 * 1000, timeout: 15000 });
+}
+async function searchPlace(q) {
+  q = q.trim();
+  wx.q = q;
+  if (!q) return;
+  wx.results = 'loading';
+  refreshWeatherViews();
+  try {
+    const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=de&format=json`);
+    const j = await r.json();
+    wx.results = (j.results || []).map((p) => ({ lat: round2(p.latitude), lon: round2(p.longitude), name: p.name, sub: [p.admin1, p.country].filter(Boolean).join(', ') }));
+  } catch { wx.results = 'fehler'; }
+  refreshWeatherViews();
+}
+function weatherCardInner() {
+  if (!wxLoc || wx.edit) {
+    const res = wx.results === 'loading' ? '<p class="muted">Suche …</p>'
+      : wx.results === 'fehler' ? '<p class="muted">Suche fehlgeschlagen – bist du online?</p>'
+        : Array.isArray(wx.results) ? (wx.results.length ? `<div class="wxres">${wx.results.map((p, i) =>
+          `<button type="button" class="chipbtn" data-wx-pick="${i}">${esc(p.name)}<small>${esc(p.sub)}</small></button>`).join('')}</div>` : '<p class="muted">Kein Ort gefunden.</p>') : '';
+    return `<div class="wxhead"><b>Wetter</b>${wxLoc ? '<button type="button" class="textbtn" data-wx-cancel>Abbrechen</button>' : ''}</div>
+      <p class="muted">Für das Tageswetter brauche ich deinen Standort.</p>
+      <div class="row wrap"><button type="button" class="primary" data-wx-gps>📍 Aktuellen Standort verwenden</button></div>
+      <div class="row wxsearch"><input id="wxQuery" type="search" placeholder="… oder Ort eingeben, z. B. Erfurt" autocomplete="off" value="${esc(wx.q || '')}"><button type="button" class="chipbtn" data-wx-search>Suchen</button></div>
+      ${res}`;
+  }
+  const w = wxDay(isoDay());
+  const place = `<button type="button" class="wxplace" data-wx-edit title="Ort ändern">📍 ${esc(wxLoc.name)} · ändern</button>`;
+  if (!w) {
+    const msg = wx.loading ? 'Wetter wird geladen …' : wx.error === 'offline' ? 'Offline – kein Wetter verfügbar.' : wx.error ? 'Wetter gerade nicht verfügbar.' : 'Wetter wird geladen …';
+    return `<div class="wxnow"><span class="wxico">🌡️</span><div><b>Heute</b><p class="muted">${msg}</p>${place}</div></div>`;
+  }
+  const t = wxText(w);
+  return `<div class="wxnow"><span class="wxico">${t.ico}</span><div class="wxmain"><b>Heute · ${esc(t.txt)}</b>
+      <p><span class="wxt">${t.t}</span>${t.rain ? ` <span class="wxrain">${t.rain} Regen</span>` : ''}</p>${place}</div></div>`;
+}
+function dayWeatherHtml(d) {
+  if (!wxLoc) return '<p id="dayWx" class="daywx muted">Wetter: Standort im Planer festlegen.</p>';
+  const w = wxDay(d);
+  if (w) { const t = wxText(w); return `<p id="dayWx" class="daywx"><span class="wxico small">${t.ico}</span><span><b>${esc(t.txt)}</b><br>${t.t}${t.rain ? ` · ${t.rain} Regen` : ''}</span></p>`; }
+  const diff = -daysSince(d);
+  const why = wx.loading ? 'Wetter wird geladen …' : diff >= WX_FORECAST_DAYS ? `Noch keine Vorhersage – sie reicht ${WX_FORECAST_DAYS} Tage im Voraus.` : diff < -31 ? 'Kein Wetter für so weit zurückliegende Tage.' : 'Wetter gerade nicht verfügbar.';
+  return `<p id="dayWx" class="daywx muted">${why}</p>`;
+}
+function wireWeather() {
+  $('#planView').addEventListener('click', (e) => {
+    const t = e.target;
+    if (t.closest('[data-wx-gps]')) return useGps();
+    if (t.closest('[data-wx-edit]')) { wx.edit = true; wx.results = null; return refreshWeatherViews(); }
+    if (t.closest('[data-wx-cancel]')) { wx.edit = false; return refreshWeatherViews(); }
+    if (t.closest('[data-wx-search]')) return searchPlace($('#wxQuery').value);
+    const p = t.closest('[data-wx-pick]');
+    if (p) { const r = wx.results[Number(p.dataset.wxPick)]; setWxLoc({ mode: 'ort', lat: r.lat, lon: r.lon, name: r.name }); }
+  });
+  $('#planView').addEventListener('keydown', (e) => {
+    if (e.target.id === 'wxQuery' && e.key === 'Enter') { e.preventDefault(); searchPlace(e.target.value); }
+  });
+  window.addEventListener('online', () => { if (tab === 'plan') loadWeather(); });
+}
+function weatherOnPlan() {
+  if (wxLoc?.mode === 'gps' && !wx.gpsChecked) { wx.gpsChecked = true; useGps(true); }
+  loadWeather();
 }
 
 /* ---------------- Einstellungen ---------------- */
@@ -3414,6 +3559,7 @@ async function init() {
   renderSortOptions();
   wireEvents();
   wirePlanner();
+  wireWeather();
   await DB.open();
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   await loadState();

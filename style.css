@@ -529,3 +529,22 @@ button.orow { grid-template-columns: 52px 1fr; }
 button.orow { grid-template-columns: 54px 1fr; }
 .othumb .collage.look { padding: 2px; gap: 2px; }
 .dthumb .collage img, .othumb .collage img, .day .dthumb .collage img { object-fit: contain; background: transparent; }
+
+/* Wetter */
+.wxcard { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin-bottom: 12px; }
+.wxcard .muted { margin: 4px 0 10px; font-size: 14px; }
+.wxhead { display: flex; justify-content: space-between; align-items: center; }
+.wxnow { display: flex; gap: 12px; align-items: center; }
+.wxico { font-size: 40px; line-height: 1; }
+.wxico.small { font-size: 28px; }
+.wxnow p { margin: 2px 0 2px; }
+.wxt { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.wxrain { color: #2f6f9e; font-weight: 600; margin-left: 6px; }
+@media (prefers-color-scheme: dark) { .wxrain { color: #8cc2ea; } }
+.wxplace { border: 0; background: none; padding: 0; color: var(--muted); font-size: 13px; }
+.wxsearch { margin-top: 8px; }
+.wxsearch input { flex: 1; min-width: 0; font-size: 16px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.wxres { display: grid; gap: 6px; margin-top: 8px; }
+.wxres .chipbtn { text-align: left; border-radius: 10px; }
+.wxres small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.daywx { display: flex; gap: 10px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0 0 6px; font-size: 14px; }
