@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -489,11 +489,16 @@ const filters = JSON.parse(localStorage.getItem('ks_filters') || '{}');
 
 async function loadState() {
   const all = (await DB.all('items')).filter((i) => !i._deleted);
+  // Papierkorb: als gelöscht markierte Einträge getrennt halten
+  trashItems = all.filter((i) => i.geloescht);
+  const live = all.filter((i) => !i.geloescht);
   // Wunschliste: eigene Liste, taucht sonst nirgends auf (Outfits, Statistik, Planer …)
-  items = all.filter((i) => !i.wunsch);
-  wishes = all.filter((i) => i.wunsch);
-  outfits = (await DB.all('outfits')).filter((o) => !o._deleted);
-  packlists = (await DB.all('packlisten')).filter((o) => !o._deleted);
+  items = live.filter((i) => !i.wunsch);
+  wishes = live.filter((i) => i.wunsch);
+  const allO = (await DB.all('outfits')).filter((o) => !o._deleted);
+  outfits = allO.filter((o) => !o.geloescht); trashOutfits = allO.filter((o) => o.geloescht);
+  const allP = (await DB.all('packlisten')).filter((o) => !o._deleted);
+  packlists = allP.filter((o) => !o.geloescht); trashPacks = allP.filter((o) => o.geloescht);
   if (await migrateItems(all) && Auth.signedIn()) scheduleSync();
   photoMap = new Map((await DB.all('photos')).map((p) => [p.id, p]));
 }
@@ -1398,6 +1403,7 @@ async function sync() {
     await pullChanges();
     localStorage.setItem('ks_lastSync', new Date().toISOString());
     await loadState();
+    if (await purgeOldTrash()) await loadState();
     await recountPending();
     render();
     hideBanner();
@@ -1802,6 +1808,7 @@ function outfitFilterHtml() {
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')}</select></label>`;
   }).join('') + `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${outfitFilters.fav === 'ja' ? ' selected' : ''}>Nur Favoriten (${outfits.filter((o) => o.favorit).length})</option></select></label>`
+    + wxSelect(outfitFilters.wetter || '', outfits.filter(fitsToday).length)
     + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
 }
 function renderOutfits() {
@@ -1811,7 +1818,7 @@ function renderOutfits() {
   $('#filterToggle').classList.toggle('active', nf > 0);
   const q = $('#search').value.trim().toLowerCase();
   const list = outfits
-    .filter((o) => Object.entries(outfitFilters).every(([k, v]) => !v || (k === 'fav' ? !!o.favorit : (o[k] || []).includes(v))))
+    .filter((o) => Object.entries(outfitFilters).every(([k, v]) => !v || (k === 'fav' ? !!o.favorit : k === 'wetter' ? todayMax() === null || fitsToday(o) : (o[k] || []).includes(v))))
     .filter((o) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q));
   sortOutfits(list, $('#sort').value);
   $('#count').textContent = outfits.length
@@ -1921,7 +1928,7 @@ async function saveOutfit() {
   await loadState(); await recountPending(); render(); updateSyncIndicator(); scheduleSync();
   return id;
 }
-async function deleteOutfit(id) {
+async function purgeOutfit(id) {
   const o = await DB.get('outfits', id);
   if (!o) return;
   for (const pid of o.photos || []) await removePhotoRecord(pid);
@@ -2292,7 +2299,7 @@ async function removePhotoRecord(pid) {
   }
 }
 
-async function deleteItem(id) {
+async function purgeItem(id) {
   const it = await DB.get('items', id);
   if (!it) return;
   for (const pid of it.photos || []) await removePhotoRecord(pid);
@@ -2332,12 +2339,13 @@ function agoText(s) {
 }
 
 const STATUS = ['Aussortiert', 'Verkauft', 'Verschenkt'];
-const SPECIAL_KEYS = ['status', 'waesche', 'getragen', 'fav'];
+const SPECIAL_KEYS = ['status', 'waesche', 'getragen', 'fav', 'wetter'];
 /** Status: leer = nur Teile im Schrank, „*“ = alle; Wäsche: ja/nein; Getragen: nie oder seit N Tagen nicht */
 function matchSpecial(it, f) {
   const st = f.status || '';
   if (st === '') { if (it.status) return false; } else if (st !== '*' && it.status !== st) return false;
   if (f.fav === 'ja' && !it.favorit) return false;
+  if (f.wetter === 'heute' && todayMax() !== null && !fitsToday(it)) return false;
   if (f.waesche === 'ja' && !it.waesche) return false;
   if (f.waesche === 'nein' && it.waesche) return false;
   if (f.getragen === 'nie' && wornCount(it)) return false;
@@ -2351,6 +2359,7 @@ function specialFiltersHtml(f, withStatus) {
   const favSel = (cur, n) => `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${cur === 'ja' ? ' selected' : ''}>Nur Favoriten (${n})</option></select></label>`;
   return favSel(f.fav || '', count((i) => i.favorit)) + (withStatus ? sel('status', 'Status', [['', `Im Schrank (${count(() => true)})`], ...STATUS.map((s) => [s, `${s} (${items.filter((i) => i.status === s).length})`]), ['*', `Alle (${items.length})`]]) : '')
     + sel('waesche', 'Wäsche', [['', 'Alle'], ['ja', `In der Wäsche (${count((i) => i.waesche)})`], ['nein', 'Nicht in der Wäsche']])
+    + wxSelect(f.wetter || '', count(fitsToday))
     + sel('getragen', 'Getragen', [['', 'Alle'], ['nie', `Noch nie (${count((i) => !wornCount(i))})`], ['30', 'Seit 1 Monat nicht'], ['90', 'Seit 3 Monaten nicht'], ['180', 'Seit 6 Monaten nicht'], ['365', 'Seit 1 Jahr nicht']]);
 }
 
@@ -2368,12 +2377,13 @@ async function afterChange() {
   await loadState(); await recountPending(); render(); updateSyncIndicator(); scheduleSync();
 }
 async function setItemWorn(id, day, on) {
-  await patchRec('items', id, (it) => { it.getragen = on ? addDay(it.getragen, day) : removeDay(it.getragen, day); });
+  await patchRec('items', id, (it) => { it.getragen = on ? addDay(it.getragen, day) : removeDay(it.getragen, day); setWornWx(it, day, on); });
 }
 /** Outfit getragen: Datum beim Outfit und bei allen enthaltenen Teilen */
 async function setOutfitWorn(id, day, on) {
   const o = await patchRec('outfits', id, (r) => {
     r.getragen = on ? addDay(r.getragen, day) : removeDay(r.getragen, day);
+    setWornWx(r, day, on);
     if (on) r.geplant = removeDay(r.geplant, day);
   });
   for (const iid of o?.itemIds || []) await setItemWorn(iid, day, on);
@@ -2393,7 +2403,7 @@ function renderWearBox(sel, kind, r) {
   const n = wornCount(r);
   const today = isoDay();
   const wornToday = (r.getragen || []).includes(today);
-  const stats = [n ? `${n}× getragen` : 'Noch nie getragen', n ? `zuletzt ${agoText(lastWorn(r))}` : ''];
+  const stats = [n ? `${n}× getragen` : 'Noch nie getragen', n ? `zuletzt ${agoText(lastWorn(r))}` : '', wornTempText(r)];
   if (kind === 'item' && hasValue(r.preis)) stats.push(`${formatPrice(costPerWear(r))} pro Tragen`);
   const planned = (r.geplant || []).filter((d) => d >= today);
   box.innerHTML = `<h3>Getragen</h3>
@@ -2513,8 +2523,9 @@ function renderPlan() {
     const worn = outfitsWornOn(ds);
     const wornItems = itemsWornOn(ds).length;
     const show = plan[0] || worn[0];
+    const w = wxDay(ds);
     cells.push(`<button type="button" class="day${d.getMonth() !== m ? ' other' : ''}${ds === today ? ' today' : ''}${plan.length ? ' planned' : ''}" data-day="${ds}">
-      <span class="dn">${d.getDate()}</span>${show ? `<span class="dthumb">${firstPhoto(show)}</span>` : ''}
+      <span class="dn">${d.getDate()}</span>${w ? `<span class="dwx" title="${esc(wxText(w).line)}">${(WX_CODES[w.code] || ['🌡️'])[0]}${Math.round(w.max)}°</span>` : ''}${show ? `<span class="dthumb">${firstPhoto(show)}</span>` : ''}
       ${plan.length + worn.length > 1 ? `<span class="dmore">+${plan.length + worn.length - 1}</span>` : ''}
       ${wornItems ? '<span class="dworn" title="Getragen">✓</span>' : ''}</button>`);
   }
@@ -2633,7 +2644,7 @@ async function updatePack(fn) {
   await afterChange();
   renderPack();
 }
-async function deletePack(id) {
+async function purgePack(id) {
   const p = await DB.get('packlisten', id);
   if (!p) return;
   if (!p._etag) await DB.del('packlisten', id);
@@ -2728,6 +2739,7 @@ function wirePlanner() {
   });
   $('#detailFav').addEventListener('click', () => toggleFav('items', detailId));
   $('#outfitFav').addEventListener('click', () => toggleFav('outfits', outfitDetailId));
+  $('#outfitShare').addEventListener('click', () => shareOutfit(outfitDetailId));
   $('#detailCopy').addEventListener('click', () => { const id = detailId; $('#detail').close(); openEditor(null, id); });
   $('#statusSeg').addEventListener('click', (e) => {
     const b = e.target.closest('[data-status]');
@@ -2814,11 +2826,9 @@ function wirePlanner() {
   });
   $('#packReset').addEventListener('click', () => updatePack((p) => { p.checked = []; }));
   $('#packDelete').addEventListener('click', async () => {
-    if (!confirm('Diese Packliste löschen? Die Teile selbst bleiben erhalten.')) return;
     const id = pk.id; pk = null;
     $('#packDlg').close();
     await deletePack(id);
-    toast('Packliste gelöscht');
   });
   // Statistik
   $('#statsView').addEventListener('click', (e) => {
@@ -2883,6 +2893,7 @@ async function loadWeather(force = false) {
     });
     wxData = { key: wxKey(), at: Date.now(), day: isoDay(), days };
     localStorage.setItem('ks_wx', JSON.stringify(wxData));
+    backfillWornWx();
   } catch (e) {
     console.warn('Wetter', e);
     wx.error = 'fehler';
@@ -2892,7 +2903,9 @@ async function loadWeather(force = false) {
   }
 }
 function refreshWeatherViews() {
-  if (tab === 'plan' && $('#wxBox')) $('#wxBox').innerHTML = weatherCardInner();
+  if (tab === 'plan' && $('#wxBox')) {
+    if (wx.edit || !wxLoc) $('#wxBox').innerHTML = weatherCardInner(); else renderPlan();
+  }
   if ($('#dayDlg').open && dayOpen) { const b = $('#dayWx'); if (b) b.outerHTML = dayWeatherHtml(dayOpen); }
 }
 function setWxLoc(loc) {
@@ -2978,8 +2991,239 @@ function weatherOnPlan() {
   loadWeather();
 }
 
+/* ---------------- Papierkorb ---------------- */
+const TRASH_DAYS = 30;
+const TRASH_STORES = { items: 'Teil', outfits: 'Outfit', packlisten: 'Packliste' };
+let trashItems = [], trashOutfits = [], trashPacks = [];
+const trashCount = () => trashItems.length + trashOutfits.length + trashPacks.length;
+/** In den Papierkorb legen (wird mitsynchronisiert, Fotos bleiben erhalten) */
+async function trashRec(store, id) {
+  await patchRec(store, id, (r) => { r.geloescht = new Date().toISOString(); });
+  await afterChange();
+}
+async function restoreRec(store, id) {
+  await patchRec(store, id, (r) => { delete r.geloescht; });
+  await afterChange();
+  if ($('#trashDlg').open) renderTrash();
+}
+async function purgeRec(store, id) {
+  if (store === 'items') return purgeItem(id);
+  if (store === 'outfits') return purgeOutfit(id);
+  return purgePack(id);
+}
+/** Einträge, die länger als 30 Tage im Papierkorb liegen, endgültig löschen */
+async function purgeOldTrash() {
+  const limit = Date.now() - TRASH_DAYS * 864e5;
+  let n = 0;
+  for (const [store, list] of [['items', trashItems], ['outfits', trashOutfits], ['packlisten', trashPacks]]) {
+    for (const r of list) if (Date.parse(r.geloescht) < limit) { await purgeRec(store, r.id); n++; }
+  }
+  return n;
+}
+async function deleteItem(id) {
+  const it = findItem(id);
+  await trashRec('items', id);
+  undoToast(`„${it ? itemTitle(it) : 'Teil'}“ liegt im Papierkorb`, () => restoreRec('items', id));
+}
+async function deleteOutfit(id) {
+  await trashRec('outfits', id);
+  undoToast('Outfit liegt im Papierkorb', () => restoreRec('outfits', id));
+}
+async function deletePack(id) {
+  await trashRec('packlisten', id);
+  undoToast('Packliste liegt im Papierkorb', () => restoreRec('packlisten', id));
+}
+let undoFn = null;
+function undoToast(msg, fn) {
+  toast(msg);
+  undoFn = fn;
+  const t = $('#toast');
+  t.innerHTML = `<span>${esc(msg)}</span><button type="button" class="undo" data-undo>Rückgängig</button>`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; undoFn = null; }, 7000);
+}
+function renderTrash() {
+  const left = (r) => Math.max(0, TRASH_DAYS - daysSince(isoDay(new Date(r.geloescht))));
+  const row = (store, r, thumb, title) => `<div class="orow trow"><span class="othumb">${thumb || '<span class="ph">–</span>'}</span>
+    <span><b>${esc(title)}</b><small>${esc(`gelöscht ${agoText(isoDay(new Date(r.geloescht)))} · noch ${left(r)} ${left(r) === 1 ? 'Tag' : 'Tage'}`)}</small></span>
+    <button type="button" class="chipbtn" data-restore="${store}:${esc(r.id)}">Wiederherstellen</button>
+    <button type="button" class="x" data-purge="${store}:${esc(r.id)}" aria-label="Endgültig löschen">✕</button></div>`;
+  const byDate = (a, b) => String(b.geloescht).localeCompare(String(a.geloescht));
+  const sec = (title, html) => (html ? `<h3>${title}</h3>${html}` : '');
+  const html = sec('Teile & Wünsche', [...trashItems].sort(byDate).map((it) => row('items', it, (it.photos || [])[0] ? photoCell(it) : '', itemTitle(it) + (it.wunsch ? ' (Wunsch)' : ''))).join(''))
+    + sec('Outfits', [...trashOutfits].sort(byDate).map((o) => row('outfits', o, firstPhoto(o), outfitTitle(o))).join(''))
+    + sec('Packlisten', [...trashPacks].sort(byDate).map((p) => row('packlisten', p, '', p.name || 'Packliste')).join(''));
+  $('#trashBody').innerHTML = html
+    ? `<p class="hint">Gelöschtes bleibt ${TRASH_DAYS} Tage hier und wird dann endgültig entfernt (auch aus der Cloud).</p>${html}
+       <button type="button" class="danger" data-purge-all>Papierkorb leeren</button>`
+    : '<p class="muted">Der Papierkorb ist leer.</p>';
+}
+function wireTrash() {
+  $('#toast').addEventListener('click', async (e) => {
+    if (!e.target.closest('[data-undo]') || !undoFn) return;
+    const fn = undoFn; undoFn = null;
+    $('#toast').hidden = true;
+    await fn();
+    toast('Wiederhergestellt');
+  });
+  $('#trashBtn').addEventListener('click', () => { renderTrash(); $('#trashDlg').showModal(); });
+  $('#trashBody').addEventListener('click', async (e) => {
+    const r = e.target.closest('[data-restore]');
+    if (r) { const [store, id] = r.dataset.restore.split(':'); await restoreRec(store, id); return toast('Wiederhergestellt'); }
+    const p = e.target.closest('[data-purge]');
+    if (p) {
+      if (!confirm('Endgültig löschen? Das lässt sich nicht rückgängig machen.')) return;
+      const [store, id] = p.dataset.purge.split(':');
+      await purgeRec(store, id); renderTrash(); renderSettings(); return;
+    }
+    if (e.target.closest('[data-purge-all]')) {
+      if (!confirm(`Alle ${trashCount()} Einträge im Papierkorb endgültig löschen?`)) return;
+      for (const it of [...trashItems]) await purgeItem(it.id);
+      for (const o of [...trashOutfits]) await purgeOutfit(o.id);
+      for (const p2 of [...trashPacks]) await purgePack(p2.id);
+      renderTrash(); renderSettings(); toast('Papierkorb geleert');
+    }
+  });
+}
+
+/* ---------------- Wetter beim Tragen ---------------- */
+const WX_TOL = 4; // ± Grad für „passt zu heute“
+const wornTemps = (r) => Object.values(r.wornWx || {}).map((v) => v[0]);
+function wornTempText(r) {
+  const ts = wornTemps(r);
+  if (!ts.length) return '';
+  const lo = Math.round(Math.min(...ts)), hi = Math.round(Math.max(...ts));
+  return lo === hi ? `getragen bei ${hi}°` : `getragen bei ${lo}–${hi}°`;
+}
+const todayMax = () => wxDay(isoDay())?.max ?? null;
+const fitsToday = (r) => { const t = todayMax(); return t !== null && wornTemps(r).some((x) => Math.abs(x - t) <= WX_TOL); };
+function wxSelect(cur, n) {
+  const t = todayMax();
+  return `<label>Wetter<select data-filter="wetter"><option value="">Alle</option>${t === null
+    ? `<option value="heute" disabled${cur === 'heute' ? ' selected' : ''}>Passt zu heute (Wetter im Planer einrichten)</option>`
+    : `<option value="heute"${cur === 'heute' ? ' selected' : ''}>Passt zu heute, ${Math.round(t)}° (${n})</option>`}</select></label>`;
+}
+/** Temperatur zu Trage-Tagen nachtragen, sobald Wetterdaten da sind (z. B. getragen, bevor der Standort eingerichtet war) */
+async function backfillWornWx() {
+  if (!wxData || wxData.key !== wxKey()) return;
+  let n = 0;
+  for (const [store, list] of [['items', items], ['outfits', outfits]]) {
+    for (const r of list) {
+      const missing = (r.getragen || []).filter((d) => !(r.wornWx || {})[d] && wxDay(d));
+      if (!missing.length) continue;
+      await patchRec(store, r.id, (x) => { x.wornWx = { ...(x.wornWx || {}) }; for (const d of missing) { const w = wxDay(d); x.wornWx[d] = [w.max, w.min]; } });
+      n++;
+    }
+  }
+  if (n) await afterChange();
+}
+const setWornWx = (r, day, on) => {
+  const w = wxDay(day);
+  const m = { ...(r.wornWx || {}) };
+  if (on && w) m[day] = [w.max, w.min]; else delete m[day];
+  if (Object.keys(m).length) r.wornWx = m; else delete r.wornWx;
+};
+
+/* ---------------- Outfit als Bild teilen ---------------- */
+async function loadImg(pid) {
+  const url = (await fullUrl(pid).catch(() => null)) || thumbUrl(pid);
+  if (!url) return null;
+  const img = new Image();
+  img.src = url;
+  try { await img.decode(); return img; } catch { return null; }
+}
+function drawFit(ctx, img, x, y, w, h, contain) {
+  const s = contain ? Math.min(w / img.width, h / img.height) : Math.max(w / img.width, h / img.height);
+  const dw = img.width * s, dh = img.height * s;
+  ctx.save();
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, w, h, 18); else ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  ctx.restore();
+}
+async function outfitImage(o) {
+  const W = 1080, H = 1440, FOOT = 130, P = 28, G = 14;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H + FOOT;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f3efe8'; ctx.fillRect(0, 0, W, H + FOOT);
+  const cell = async (it, x, y, w, h) => {
+    ctx.fillStyle = '#e6e0d6';
+    ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, 18); else ctx.rect(x, y, w, h); ctx.fill();
+    const pid = (it.photos || [])[0];
+    const img = pid ? await loadImg(pid) : null;
+    if (img) drawFit(ctx, img, x + (isPng(pid) ? 10 : 0), y + (isPng(pid) ? 10 : 0), w - (isPng(pid) ? 20 : 0), h - (isPng(pid) ? 20 : 0), isPng(pid));
+  };
+  const cover = outfitView !== 'collage' && (o.photos || [])[0];
+  if (cover) {
+    const img = await loadImg(cover);
+    if (img) drawFit(ctx, img, P, P, W - 2 * P, H - 2 * P, true);
+  } else {
+    const all = sortBySlot(outfitItems(o));
+    const by = { top: [], full: [], bottom: [], shoes: [], side: [] };
+    for (const it of all) by[slotOf(it)].push(it);
+    const rows = [['top', 4], ['full', 7], ['bottom', 4], ['shoes', 2.2]].filter(([k]) => by[k].length);
+    if (rows.length >= 2) {
+      const side = by.side.slice(0, 5);
+      const mainW = side.length ? (W - 2 * P - G) * 0.75 : W - 2 * P;
+      const sum = rows.reduce((s, r) => s + r[1], 0);
+      const freeH = H - 2 * P - G * (rows.length - 1);
+      let y = P;
+      for (const [k, wgt] of rows) {
+        const h = freeH * wgt / sum;
+        const its = by[k].slice(0, 4);
+        const w = (mainW - G * (its.length - 1)) / its.length;
+        for (let i = 0; i < its.length; i++) await cell(its[i], P + i * (w + G), y, w, h);
+        y += h + G;
+      }
+      if (side.length) {
+        const sx = P + mainW + G, sw = W - 2 * P - mainW - G;
+        const sh = Math.min((H - 2 * P - G * (side.length - 1)) / side.length, sw * 1.3);
+        let sy = P + (H - 2 * P - (sh * side.length + G * (side.length - 1))) / 2;
+        for (const it of side) { await cell(it, sx, sy, sw, sh); sy += sh + G; }
+      }
+    } else {
+      const its = all.slice(0, 4);
+      const iw = W - 2 * P, ih = H - 2 * P, hw = (iw - G) / 2, hh = (ih - G) / 2;
+      const boxes = its.length === 1 ? [[P, P, iw, ih]]
+        : its.length === 2 ? [[P, P, hw, ih], [P + hw + G, P, hw, ih]]
+          : its.length === 3 ? [[P, P, hw, ih], [P + hw + G, P, hw, hh], [P + hw + G, P + hh + G, hw, hh]]
+            : [[P, P, hw, hh], [P + hw + G, P, hw, hh], [P, P + hh + G, hw, hh], [P + hw + G, P + hh + G, hw, hh]];
+      for (let i = 0; i < its.length; i++) await cell(its[i], ...boxes[i]);
+    }
+  }
+  // Titel unten
+  ctx.fillStyle = '#1f2a28';
+  ctx.font = '600 46px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  ctx.textBaseline = 'middle';
+  let title = outfitTitle(o);
+  while (ctx.measureText(title).width > W - 2 * P && title.length > 4) title = title.slice(0, -2).trimEnd() + '…';
+  ctx.fillText(title, P + 6, H + FOOT / 2 - 6);
+  return new Promise((res) => c.toBlob(res, 'image/jpeg', 0.9));
+}
+async function shareOutfit(id) {
+  const o = outfits.find((x) => x.id === id);
+  if (!o) return;
+  toast('Bild wird erstellt …');
+  const blob = await outfitImage(o);
+  if (!blob) return toast('Bild konnte nicht erstellt werden.');
+  const name = `${outfitTitle(o).replace(/[\\/:*?"<>|]+/g, '').slice(0, 60) || 'Outfit'}.jpg`;
+  const file = new File([blob], name, { type: 'image/jpeg' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: outfitTitle(o) }); $('#toast').hidden = true; return; } catch (e) { if (e.name === 'AbortError') { $('#toast').hidden = true; return; } }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  toast('Bild heruntergeladen');
+}
+
 /* ---------------- Einstellungen ---------------- */
 function renderSettings() {
+  $('#trashBtn').textContent = `Papierkorb${trashCount() ? ` (${trashCount()})` : ''}`;
   const P = prov();
   for (const b of $('#provSeg').children) b.classList.toggle('active', b.dataset.prov === provKey());
   $('#provBox').hidden = !P;
@@ -3185,14 +3429,12 @@ function wireEvents() {
     });
   }
   $('#outfitDelete').addEventListener('click', async () => {
-    if (!confirm('Dieses Outfit löschen? Die Teile selbst bleiben erhalten.')) return;
     const id = oed.id;
     oed = null;
     $('#outfitEditor').close();
     if ($('#outfitDetail').open) $('#outfitDetail').close();
     await deleteOutfit(id);
     if ($('#detail').open && detailId) openDetail(detailId);
-    toast('Outfit gelöscht');
   });
   $('#pickSearch').addEventListener('input', renderPicker);
   $('#pickFilterToggle').addEventListener('click', () => { $('#pickFilters').hidden = !$('#pickFilters').hidden; });
@@ -3430,12 +3672,10 @@ function wireEvents() {
   });
   $('#anlassNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addAnlass(); } });
   $('#deleteBtn').addEventListener('click', async () => {
-    if (!confirm('Dieses Teil mit allen Fotos löschen?')) return;
     const id = ed.id;
     ed = null;
     $('#editor').close();
     await deleteItem(id);
-    toast('Gelöscht');
   });
 
   // Foto-Aktionen im Editor
@@ -3560,9 +3800,11 @@ async function init() {
   wireEvents();
   wirePlanner();
   wireWeather();
+  wireTrash();
   await DB.open();
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   await loadState();
+  if (await purgeOldTrash()) await loadState();
   await recountPending();
   render();
 

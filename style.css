@@ -548,3 +548,15 @@ button.orow { grid-template-columns: 54px 1fr; }
 .wxres .chipbtn { text-align: left; border-radius: 10px; }
 .wxres small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
 .daywx { display: flex; gap: 10px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0 0 6px; font-size: 14px; }
+
+/* Papierkorb & Rückgängig */
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast[hidden] { display: none; }
+.toast .undo { background: none; border: 0; color: #9fe0d5; font-weight: 700; padding: 2px 4px; white-space: nowrap; }
+.trow { grid-template-columns: 54px 1fr auto auto; }
+.trow .chipbtn { padding: 5px 10px; font-size: 13px; }
+/* Kalender: Wetter je Tag */
+.day .dwx { position: absolute; top: 2px; right: 3px; font-size: 10px; z-index: 1; font-variant-numeric: tabular-nums; }
+.day .dworn { top: auto; bottom: 2px; right: 4px; background: var(--card); border-radius: 50%; width: 14px; height: 14px; display: grid; place-items: center; }
+.day .dwx { top: 16px; left: 3px; right: auto; font-size: 10px; letter-spacing: -.3px; white-space: nowrap; }
+.day:has(.dwx) .dthumb { inset: 31px 2px 2px; }

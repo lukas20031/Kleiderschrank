@@ -283,7 +283,7 @@
   <div class="sheetbody">
     <div id="outfitDetailPhotos" class="gallery" hidden></div>
     <div id="outfitDetailLook" class="outfitlook" hidden></div>
-    <button type="button" id="outfitFav" class="chipbtn favbtn"></button>
+    <div class="row wrap"><button type="button" id="outfitFav" class="chipbtn favbtn"></button><button type="button" id="outfitShare" class="chipbtn favbtn">Als Bild teilen</button></div>
     <dl id="outfitDetailMeta" class="props" hidden></dl>
     <p id="outfitDetailNote" class="onote" hidden></p>
     <div id="outfitWear" class="wearbox"></div>
@@ -411,6 +411,16 @@
   </form>
 </dialog>
 
+<!-- Papierkorb -->
+<dialog id="trashDlg" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Zurück</button>
+    <h2>Papierkorb</h2>
+    <span></span>
+  </header>
+  <div class="sheetbody" id="trashBody"></div>
+</dialog>
+
 <!-- Settings -->
 <dialog id="settings" class="sheet">
   <header class="sheethead">
@@ -457,6 +467,7 @@
     <p id="stats" class="muted"></p>
     <div class="row wrap">
       <button type="button" id="csvBtn" class="chipbtn">Als CSV exportieren</button>
+      <button type="button" id="trashBtn" class="chipbtn">Papierkorb</button>
     </div>
     <p class="hint" id="whereHint"></p>
     <p class="hint" id="version"></p>
