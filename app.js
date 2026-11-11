@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.10.2';
+const APP_VERSION = '2.11.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -20,6 +20,7 @@ const FIELDS = [
   { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true },
   { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
   { key: 'passform', label: 'Passform', type: 'chips', options: ['Zu klein', 'Eng', 'Passend', 'Locker', 'Zu groß'], wide: true },
+  { key: 'anzahl', label: 'Anzahl', type: 'count', wide: true, noFilter: true },
   { key: 'marke', label: 'Marke', type: 'text', defaults: [], wide: true },
   { key: 'preis', label: 'Preis', type: 'price', wide: true, noFilter: true },
   { key: 'kaufdatum', label: 'Kaufdatum', type: 'date', wide: true, noFilter: true },
@@ -35,7 +36,7 @@ for (const f of FIELDS) {
 const isMulti = (key) => key === 'anlass' || key === 'jahreszeit' || FIELD[key]?.type === 'multi';
 const hasValue = (v) => v !== undefined && v !== null && v !== '';
 const fieldValues = (it, key) => (isMulti(key) ? (Array.isArray(it[key]) ? it[key] : []) : (hasValue(it[key]) ? [it[key]] : []));
-const INPUT_TYPES = ['text', 'price', 'date', 'url'];           // Felder mit normalem Eingabefeld
+const INPUT_TYPES = ['text', 'price', 'date', 'url', 'count'];           // Felder mit normalem Eingabefeld
 const isInputField = (f) => INPUT_TYPES.includes(f.type);
 const priceFmt = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const formatPrice = (v) => (hasValue(v) && !Number.isNaN(Number(v)) ? `${priceFmt.format(Number(v))} €` : '');
@@ -55,8 +56,14 @@ function normalizeUrl(s) {
   if (!/^[a-z][a-z0-9+.-]*:/i.test(t)) t = `https://${t}`;
   try { const u = new URL(t); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch { return ''; }
 }
+/* Anzahl gleicher Teile (Standard 1) und wie viele davon in der Wäsche sind */
+const qty = (it) => Math.max(1, parseInt(it?.anzahl, 10) || 1);
+const washN = (it) => (it.waesche === true ? qty(it) : Math.min(qty(it), Math.max(0, parseInt(it.waesche, 10) || 0)));
+const washAll = (it) => washN(it) >= qty(it);
+const washLabel = (it) => (qty(it) > 1 && !washAll(it) ? `${washN(it)}/${qty(it)} Wäsche` : 'Wäsche');
 const fieldText = (it, key) => {
   const t = FIELD[key]?.type;
+  if (t === 'count') return qty(it) > 1 ? String(qty(it)) : ''; // nur zeigen, wenn mehr als 1
   if (t === 'price') return formatPrice(it[key]);
   if (t === 'date') return formatDate(it[key]);
   return fieldValues(it, key).join(', ');
@@ -501,7 +508,7 @@ const Store = () => (provKey() === 'dropbox' ? DropboxStore : OneDriveStore);
 let items = [];
 let wishes = [];         // Teile auf der Wunschliste (wunsch: true)
 const findItem = (id) => items.find((i) => i.id === id) || wishes.find((i) => i.id === id);
-let packlists = [];       // { id, name, von, bis, itemIds: [], checked: [], notiz }
+let packlists = [];       // { id, name, von, bis, itemIds: [], want: {id: n}, packed: {id: n}, notiz } (früher: checked: [ids])
 let outfits = [];          // { id, name, itemIds: [], notiz, createdAt, updatedAt }            // sichtbare (nicht gelöschte) Teile
 let photoMap = new Map();  // photoId -> Datensatz {id, itemId, thumb, full, pendingUpload, pendingDelete}
 const urlCache = new Map();
@@ -1349,6 +1356,20 @@ const Crop = {
       this.rect = { ...r0, x: clamp(r0.x + dx, 0, W - r0.w), y: clamp(r0.y + dy, 0, H - r0.h) };
     } else {
       const west = d.h.includes('w'), north = d.h.includes('n');
+      const horiz = west || d.h.includes('e'), vert = north || d.h.includes('s');
+      if (!horiz || !vert) {
+        // Seitengriff: nur eine Richtung ändern (bei festem Seitenverhältnis die andere mitziehen)
+        let { x, y, w, h } = r0;
+        if (horiz) { const nx = west ? clamp(r0.x + dx, 0, r0.x + r0.w - min) : r0.x; w = west ? r0.x + r0.w - nx : clamp(r0.w + dx, min, W - r0.x); x = nx; }
+        if (vert) { const ny = north ? clamp(r0.y + dy, 0, r0.y + r0.h - min) : r0.y; h = north ? r0.y + r0.h - ny : clamp(r0.h + dy, min, H - r0.y); y = ny; }
+        if (this.ratio) {
+          if (horiz) { h = Math.min(w / this.ratio, H); w = h * this.ratio; y = clamp(r0.y + (r0.h - h) / 2, 0, H - h); if (west) x = r0.x + r0.w - w; }
+          else { w = Math.min(h * this.ratio, W); h = w / this.ratio; x = clamp(r0.x + (r0.w - w) / 2, 0, W - w); if (north) y = r0.y + r0.h - h; }
+        }
+        this.rect = { x, y, w, h };
+        this.drawBox();
+        return;
+      }
       const ax = west ? r0.x + r0.w : r0.x, ay = north ? r0.y + r0.h : r0.y;   // feste Gegenecke
       let tx = (west ? r0.x : r0.x + r0.w) + dx, ty = (north ? r0.y : r0.y + r0.h) + dy;
       tx = west ? clamp(tx, 0, ax - min) : clamp(tx, ax + min, W);
@@ -1831,7 +1852,7 @@ function filterItems(query, fState, sort = 'new', pool = items) {
   let list = pool.filter((it) => {
     if (!matchFilters(it, fState)) return false;
     if (!terms.length) return true;
-    const hay = [it.name, it.notiz, it.status, it.waesche ? 'Wäsche' : '', it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...(it.jahreszeit || []), ...FIELDS.map((f) => fieldText(it, f.key))].join(' ').toLowerCase();
+    const hay = [it.name, it.notiz, it.status, washN(it) ? 'Wäsche' : '', it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...(it.jahreszeit || []), ...FIELDS.map((f) => fieldText(it, f.key))].join(' ').toLowerCase();
     return terms.every((t) => hay.includes(t));
   });
   const cmp = (a, b, k) => (k === 'name' ? 0 : String(a[k] || '').localeCompare(String(b[k] || ''), 'de')) || itemTitle(a).localeCompare(itemTitle(b), 'de');
@@ -1929,10 +1950,10 @@ function itemCardHtml(it, { selected = null } = {}) {
   const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse, it.wunsch ? formatPrice(it.preis) : ''].filter(Boolean).join(' · ');
   const farben = fieldValues(it, 'farben');
   const n = (it.photos || []).length;
-  const flags = [n > 1 && selected === null ? `${n} Fotos` : '', it.waesche ? 'Wäsche' : '', it.status || ''].filter(Boolean);
-  return `<button type="button" class="card${selected ? ' selected' : ''}${selected !== null && (it.waesche || it.status) ? ' dim' : ''}" data-id="${esc(it.id)}">
+  const flags = [qty(it) > 1 ? `${qty(it)}×` : '', n > 1 && selected === null ? `${n} Fotos` : '', washN(it) ? washLabel(it) : '', it.status || ''].filter(Boolean);
+  return `<button type="button" class="card${selected ? ' selected' : ''}${selected !== null && (washAll(it) || it.status) ? ' dim' : ''}" data-id="${esc(it.id)}">
       ${url ? `<img class="thumb${isPng(pid) ? ' cut' : ''}" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
-      ${flags.length ? `<span class="flags">${flags.map((f) => `<span class="nphotos${f === 'Wäsche' ? ' wash' : f.endsWith('Fotos') ? '' : ' st'}">${esc(f)}</span>`).join('')}</span>` : ''}
+      ${flags.length ? `<span class="flags">${flags.map((f) => `<span class="nphotos${f.endsWith('Wäsche') ? ' wash' : f.endsWith('Fotos') || f.endsWith('×') ? '' : ' st'}">${esc(f)}</span>`).join('')}</span>` : ''}
       ${selected !== null ? `<span class="check">${selected ? '✓' : ''}</span>` : ''}
       ${it._dirty && Auth.configured && selected === null ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
       <div class="info"><div class="title${it.name ? '' : ' auto'}">${it.favorit ? '<span class="fav" title="Favorit">♥</span> ' : ''}${esc(itemTitle(it))}</div>
@@ -1960,9 +1981,11 @@ function render() {
   renderFilters();
   const list = filteredItems();
   const scope = items.filter((it) => matchSpecial(it, { status: filters.status }));
-  const nWash = list.filter((it) => it.waesche).length;
+  const nWash = list.filter((it) => washN(it)).length;
+  const pieces = list.reduce((sum, it) => sum + qty(it), 0);
   $('#count').innerHTML = items.length
     ? esc(list.length === scope.length ? `${scope.length} ${scope.length === 1 ? 'Teil' : 'Teile'}` : `${list.length} von ${scope.length} Teilen`)
+      + (pieces !== list.length ? esc(` · ${pieces} Stück`) : '')
       + (filters.waesche === 'ja' && nWash ? ' <button type="button" class="chipbtn small" data-unwash-all>Alle aus der Wäsche</button>' : '')
     : '';
   $('#empty').hidden = items.length > 0;
@@ -1980,7 +2003,7 @@ function renderWishes() {
   $('#filterCount').textContent = nf ? `(${nf})` : '';
   $('#filterToggle').classList.toggle('active', nf > 0);
   const list = filterItems($('#search').value, wishFilters, $('#sort').value, wishes);
-  const sum = list.reduce((s, it) => s + (hasValue(it.preis) ? Number(it.preis) : 0), 0);
+  const sum = list.reduce((s, it) => s + (hasValue(it.preis) ? Number(it.preis) * qty(it) : 0), 0);
   $('#count').textContent = wishes.length
     ? `${list.length === wishes.length ? wishes.length : `${list.length} von ${wishes.length}`} ${wishes.length === 1 ? 'Wunsch' : 'Wünsche'}${sum ? ` · zusammen ${formatPrice(sum)}` : ''}`
     : '';
@@ -2084,7 +2107,7 @@ function renderOutfits() {
 function outfitCardHtml(o) {
   const its = outfitItems(o);
   const useCollage = outfitView === 'collage';
-  const wash = its.filter((it) => it.waesche).length;
+  const wash = its.filter(washAll).length;
   const sub = [`${its.length} ${its.length === 1 ? 'Teil' : 'Teile'}`, wash ? `${wash} in der Wäsche` : '', ...(o.anlass || []).slice(0, 2)].filter(Boolean);
   return `<button type="button" class="card outfit" data-outfit="${esc(o.id)}">
       ${collageHtml(o, false, !useCollage)}
@@ -2226,7 +2249,8 @@ async function openDetail(id) {
   const rows = [
     ['Status', it.status || ''],
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
-    ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null]),
+    ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, f.key === 'preis' && qty(it) > 1 && hasValue(it.preis)
+      ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
   const link = normalizeUrl(it.link);
@@ -2265,6 +2289,9 @@ function buildFieldInputs() {
     const alt = `<span class="hint legacy" id="alt-${f.key}" hidden></span>`;
     if (f.type === 'text') {
       return `<label class="${cls}">${esc(f.label)}<input name="${f.key}" list="dl-${f.key}" autocomplete="off"><datalist id="dl-${f.key}"></datalist>${alt}</label>`;
+    }
+    if (f.type === 'count') {
+      return `<div class="${cls}">${esc(f.label)}<span class="unit count"><button type="button" class="chipbtn" data-step="-1" aria-label="Weniger">−</button><input name="${f.key}" type="number" inputmode="numeric" min="1" max="99" step="1"><button type="button" class="chipbtn" data-step="1" aria-label="Mehr">+</button></span>${alt}</div>`;
     }
     if (f.type === 'price') {
       return `<label class="${cls}">${esc(f.label)}<span class="unit money"><input name="${f.key}" inputmode="decimal" autocomplete="off" placeholder="0,00"><span>€</span></span>${alt}</label>`;
@@ -2478,7 +2505,7 @@ function openEditor(id = null, copyId = null) {
   form.elements.bezeichnung.value = it?.name || '';
   for (const f of FIELDS.filter(isInputField)) {
     const v = it?.[f.key];
-    form.elements[f.key].value = f.type === 'price' ? (hasValue(v) ? priceFmt.format(Number(v)) : '') : (v || '');
+    form.elements[f.key].value = f.type === 'price' ? (hasValue(v) ? priceFmt.format(Number(v)) : '') : f.type === 'count' ? qty(it) : (v || '');
   }
   form.elements.notiz.value = it?.notiz || '';
   // Wunschliste: Kaufdatum, Lagerort und Zustand gibt es (noch) nicht
@@ -2515,6 +2542,7 @@ async function saveEditor() {
   for (const f of FIELDS) {
     const raw = isInputField(f) ? form.elements[f.key].value.trim() : null;
     if (f.type === 'price') it[f.key] = parsePrice(raw);
+    else if (f.type === 'count') it[f.key] = Math.min(99, Math.max(1, parseInt(raw, 10) || 1));
     else if (f.type === 'url') it[f.key] = normalizeUrl(raw);
     else if (f.type === 'date') it[f.key] = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : '';
     else it[f.key] = isInputField(f) ? raw : ed.vals[f.key];
@@ -2582,7 +2610,7 @@ const dayShort = (s) => dayDate(s).toLocaleDateString('de-DE', { weekday: 'short
 const wornCount = (r) => (r.getragen || []).length;
 const lastWorn = (r) => (r.getragen || []).at(-1) || '';
 /** Preis pro Tragen; noch nie getragen = voller Preis; ohne Preis null */
-const costPerWear = (it) => (hasValue(it.preis) ? Number(it.preis) / Math.max(1, wornCount(it)) : null);
+const costPerWear = (it) => (hasValue(it.preis) ? Number(it.preis) * qty(it) / Math.max(1, wornCount(it)) : null);
 const addDay = (arr, d) => [...new Set([...(arr || []), d])].sort();
 const removeDay = (arr, d) => (arr || []).filter((x) => x !== d);
 function agoText(s) {
@@ -2602,8 +2630,8 @@ function matchSpecial(it, f) {
   if (st === '') { if (it.status) return false; } else if (st !== '*' && it.status !== st) return false;
   if (f.fav === 'ja' && !it.favorit) return false;
   if (f.wetter === 'heute' && todayMax() !== null && !fitsToday(it)) return false;
-  if (f.waesche === 'ja' && !it.waesche) return false;
-  if (f.waesche === 'nein' && it.waesche) return false;
+  if (f.waesche === 'ja' && !washN(it)) return false;
+  if (f.waesche === 'nein' && washAll(it)) return false; // mindestens eins verfügbar
   if (f.getragen === 'nie' && wornCount(it)) return false;
   if (/^\d+$/.test(f.getragen || '') && lastWorn(it) && daysSince(lastWorn(it)) < Number(f.getragen)) return false;
   return true;
@@ -2614,7 +2642,7 @@ function specialFiltersHtml(f, withStatus) {
   const count = (fn) => items.filter((it) => !it.status && fn(it)).length;
   const favSel = (cur, n) => `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${cur === 'ja' ? ' selected' : ''}>Nur Favoriten (${n})</option></select></label>`;
   return favSel(f.fav || '', count((i) => i.favorit)) + (withStatus ? sel('status', 'Status', [['', `Im Schrank (${count(() => true)})`], ...STATUS.map((s) => [s, `${s} (${items.filter((i) => i.status === s).length})`]), ['*', `Alle (${items.length})`]]) : '')
-    + sel('waesche', 'Wäsche', [['', 'Alle'], ['ja', `In der Wäsche (${count((i) => i.waesche)})`], ['nein', 'Nicht in der Wäsche']])
+    + sel('waesche', 'Wäsche', [['', 'Alle'], ['ja', `In der Wäsche (${count((i) => washN(i))})`], ['nein', 'Verfügbar (nicht in der Wäsche)']])
     + wxSelect(f.wetter || '', count(fitsToday))
     + sel('getragen', 'Getragen', [['', 'Alle'], ['nie', `Noch nie (${count((i) => !wornCount(i))})`], ['30', 'Seit 1 Monat nicht'], ['90', 'Seit 3 Monaten nicht'], ['180', 'Seit 6 Monaten nicht'], ['365', 'Seit 1 Jahr nicht']]);
 }
@@ -2650,6 +2678,13 @@ async function setOutfitPlanned(id, day, on) {
 async function setWash(ids, on) {
   for (const id of ids) await patchRec('items', id, (it) => { if (on) it.waesche = true; else delete it.waesche; });
 }
+/** Bei mehreren gleichen Teilen: wie viele davon in der Wäsche sind */
+async function setWashCount(id, n) {
+  await patchRec('items', id, (it) => {
+    n = Math.max(0, Math.min(qty(it), n));
+    if (!n) delete it.waesche; else it.waesche = n >= qty(it) ? true : n;
+  });
+}
 
 /** Kasten „Getragen“ in der Detailansicht von Teil und Outfit */
 function renderWearBox(sel, kind, r) {
@@ -2667,7 +2702,11 @@ function renderWearBox(sel, kind, r) {
     <div class="row wrap">
       <button type="button" class="${wornToday ? 'chipbtn active' : 'primary'}" data-wear-today>${wornToday ? '✓ Heute getragen' : 'Heute getragen'}</button>
       <button type="button" class="chipbtn" data-wear-pick>Anderer Tag …</button>
-      ${kind === 'item' && !r.status ? `<button type="button" class="chipbtn${r.waesche ? ' active' : ''}" data-wash>${r.waesche ? '✓ In der Wäsche' : 'In die Wäsche'}</button>` : ''}
+      ${kind === 'item' && !r.status && qty(r) === 1 ? `<button type="button" class="chipbtn${washN(r) ? ' active' : ''}" data-wash>${washN(r) ? '✓ In der Wäsche' : 'In die Wäsche'}</button>` : ''}
+      ${kind === 'item' && !r.status && qty(r) > 1 ? `<span class="washstep${washN(r) ? ' active' : ''}">In der Wäsche:
+        <button type="button" class="chipbtn" data-wash-step="-1" aria-label="Eins weniger in der Wäsche"${washN(r) ? '' : ' disabled'}>−</button>
+        <b>${washN(r)} von ${qty(r)}</b>
+        <button type="button" class="chipbtn" data-wash-step="1" aria-label="Eins mehr in der Wäsche"${washAll(r) ? ' disabled' : ''}>+</button></span>` : ''}
       ${kind === 'outfit' ? '<button type="button" class="chipbtn" data-plan-pick>Einplanen …</button>' : ''}
       <input type="date" class="hiddendate" data-wear-date max="${today}" aria-label="Tag auswählen">
       ${kind === 'outfit' ? '<input type="date" class="hiddendate" data-plan-date aria-label="Tag zum Einplanen">' : ''}
@@ -2696,7 +2735,8 @@ async function onWearBox(e) {
     msg = on ? (kind === 'outfit' ? 'Outfit und Teile als getragen eingetragen' : 'Als getragen eingetragen') : 'Eintrag entfernt';
   } else if (t.closest('[data-wear-pick]')) return pickDate(box.querySelector('[data-wear-date]'));
   else if (t.closest('[data-plan-pick]')) return pickDate(box.querySelector('[data-plan-date]'));
-  else if (t.closest('[data-wash]')) { await setWash([id], !rec.waesche); msg = rec.waesche ? 'Aus der Wäsche' : 'In die Wäsche gelegt'; }
+  else if (t.closest('[data-wash]')) { await setWash([id], !washN(rec)); msg = washN(rec) ? 'Aus der Wäsche' : 'In die Wäsche gelegt'; }
+  else if (t.closest('[data-wash-step]')) { await setWashCount(id, washN(rec) + Number(t.closest('[data-wash-step]').dataset.washStep)); }
   else if (t.closest('[data-unwear]')) { await worn(t.closest('[data-unwear]').dataset.unwear, false); msg = 'Eintrag entfernt'; }
   else if (t.closest('[data-unplan]')) { await setOutfitPlanned(id, t.closest('[data-unplan]').dataset.unplan, false); }
   else return;
@@ -2801,12 +2841,11 @@ function renderPlan() {
       <span class="othumb">${firstPhoto(o) || '<span class="ph">–</span>'}</span><span><b>${esc(dayLong(d))}</b><small>${esc(outfitTitle(o))}</small></span></button>`).join('')}</div>` : ''}
     <div class="sechead"><h3>Packlisten</h3><button type="button" class="chipbtn" data-new-pack>+ Neue Packliste</button></div>
     ${packs.length ? `<div class="rows">${packs.map((p) => {
-      const ids = packItemIds(p);
-      const done = ids.filter((id) => (p.checked || []).includes(id)).length;
+      const { want, done } = packTotals(p);
       const range = [formatDate(p.von), formatDate(p.bis)].filter(Boolean).join(' – ');
       return `<button type="button" class="prow" data-pack="${esc(p.id)}"><span><b>${esc(p.name || 'Packliste')}</b>
-        <small>${esc([range, `${done}/${ids.length} eingepackt`].filter(Boolean).join(' · '))}</small></span>
-        <span class="progress"><i style="width:${ids.length ? Math.round(100 * done / ids.length) : 0}%"></i></span></button>`;
+        <small>${esc([range, `${done}/${want} eingepackt`].filter(Boolean).join(' · '))}</small></span>
+        <span class="progress"><i style="width:${want ? Math.round(100 * done / want) : 0}%"></i></span></button>`;
     }).join('')}</div>` : '<p class="muted">Noch keine Packlisten. Lege eine für deine nächste Reise an.</p>'}`;
 }
 
@@ -2865,7 +2904,21 @@ function openPack(id = null) {
   $('#packDlg').showModal();
   toTop($('#packDlg'));
 }
-function curPack() { return packlists.find((x) => x.id === pk.id) || { id: pk.id, name: '', von: '', bis: '', notiz: '', itemIds: [], checked: [] }; }
+/* Stückzahlen je Teil: wie viele mitnehmen (Standard 1) und wie viele davon schon eingepackt */
+const packWant = (p, it) => Math.max(1, Math.min(qty(it), parseInt(p.want?.[it.id], 10) || 1));
+const packDone = (p, it) => Math.min(packWant(p, it), p.packed?.[it.id] ?? ((p.checked || []).includes(it.id) ? packWant(p, it) : 0));
+function packTotals(p) {
+  const its = packItemIds(p).map((id) => items.find((i) => i.id === id));
+  return { want: its.reduce((s2, it) => s2 + packWant(p, it), 0), done: its.reduce((s2, it) => s2 + packDone(p, it), 0) };
+}
+/** Altes Format (abgehakte IDs) in Stückzahlen umwandeln */
+function normPack(p) {
+  const packed = { ...(p.packed || {}) };
+  for (const id of p.checked || []) { const it = items.find((i) => i.id === id); if (it && packed[id] === undefined) packed[id] = packWant(p, it); }
+  p.packed = packed; p.want = { ...(p.want || {}) }; delete p.checked;
+  return p;
+}
+function curPack() { return packlists.find((x) => x.id === pk.id) || { id: pk.id, name: '', von: '', bis: '', notiz: '', itemIds: [], want: {}, packed: {} }; }
 function renderPack(fields = false) {
   const p = curPack();
   if (fields) {
@@ -2874,17 +2927,19 @@ function renderPack(fields = false) {
     $('#packDelete').hidden = !pk.saved;
   }
   const its = sortBySlot(packItemIds(p).map((id) => items.find((i) => i.id === id)));
-  const checked = new Set(p.checked || []);
-  const done = its.filter((it) => checked.has(it.id)).length;
+  const tot = packTotals(p);
   $('#packTitle').textContent = p.name || 'Packliste';
-  $('#packProgress').textContent = its.length ? `${done} von ${its.length} eingepackt` : '';
+  $('#packProgress').textContent = its.length ? `${tot.done} von ${tot.want} eingepackt` : '';
   $('#packItems').innerHTML = its.map((it) => {
     const pid = (it.photos || [])[0];
     const url = pid ? thumbUrl(pid) : '';
-    return `<div class="oitem pitem${checked.has(it.id) ? ' done' : ''}">
-      <button type="button" class="pcheck" data-pack-check="${esc(it.id)}" aria-label="Eingepackt">${checked.has(it.id) ? '✓' : ''}</button>
+    const want = packWant(p, it), done = packDone(p, it), full = done >= want;
+    // Bei mehreren Stück: Kreis zählt hoch (1/2, 2/2, dann wieder leer), darunter Mitnehmen − n +
+    return `<div class="oitem pitem${full ? ' done' : ''}${done && !full ? ' part' : ''}">
+      <button type="button" class="pcheck" data-pack-check="${esc(it.id)}" aria-label="Eingepackt">${want > 1 ? (done ? `${done}/${want}` : '') : full ? '✓' : ''}</button>
       ${url ? `<img class="${isPng(pid) ? 'cut' : ''}" src="${url}" alt="">` : '<span class="noimg">–</span>'}
-      <span class="oname">${esc(itemTitle(it))}${it.waesche ? ' <small class="washnote">Wäsche</small>' : ''}</span>
+      <span class="oname">${esc(itemTitle(it))}${washN(it) ? ` <small class="washnote">${esc(washLabel(it))}</small>` : ''}
+        ${qty(it) > 1 ? `<span class="pwant">Mitnehmen <button type="button" class="chipbtn" data-pack-want="-1:${esc(it.id)}" aria-label="Weniger"${want <= 1 ? ' disabled' : ''}>−</button><b>${want}</b><button type="button" class="chipbtn" data-pack-want="1:${esc(it.id)}" aria-label="Mehr"${want >= qty(it) ? ' disabled' : ''}>+</button> von ${qty(it)}</span>` : ''}</span>
       <button type="button" class="oremove" data-pack-remove="${esc(it.id)}" aria-label="Entfernen">✕</button></div>`;
   }).join('') || '<p class="hint">Noch leer. Füge Teile einzeln oder ganze Outfits hinzu.</p>';
 }
@@ -2924,14 +2979,15 @@ let statsWornLow = localStorage.getItem('ks_worn') === 'low';
 function renderStats() {
   const act = items.filter((it) => !it.status);
   if (!items.length) { $('#statsView').innerHTML = '<p class="muted">Noch keine Teile erfasst.</p>'; return; }
-  const sum = (list) => list.reduce((s, it) => s + (hasValue(it.preis) ? Number(it.preis) : 0), 0);
+  const sum = (list) => list.reduce((s, it) => s + (hasValue(it.preis) ? Number(it.preis) * qty(it) : 0), 0);
+  const nPieces = act.reduce((s, it) => s + qty(it), 0);
   const since30 = isoDay(new Date(Date.now() - 30 * 864e5));
   const wears30 = act.reduce((s, it) => s + (it.getragen || []).filter((d) => d >= since30).length, 0);
   const worn30 = act.filter((it) => (it.getragen || []).some((d) => d >= since30)).length;
   const count = (list, fn) => { const m = new Map(); for (const it of list) for (const v of fn(it)) m.set(v, (m.get(v) || 0) + 1); return m; };
   // Kategorien in fester Reihenfolge, mit Wert
   const byCat = new Map();
-  for (const it of act) { const k = it.kategorie || 'Ohne Kategorie'; const c = byCat.get(k) || [0, 0]; c[0]++; c[1] += hasValue(it.preis) ? Number(it.preis) : 0; byCat.set(k, c); }
+  for (const it of act) { const k = it.kategorie || 'Ohne Kategorie'; const c = byCat.get(k) || [0, 0]; c[0] += qty(it); c[1] += hasValue(it.preis) ? Number(it.preis) * qty(it) : 0; byCat.set(k, c); }
   const catRows = [...byCat.entries()].sort((a, b) => (CAT.order.get(a[0]) ?? 1e9) - (CAT.order.get(b[0]) ?? 1e9))
     .map(([k, [n, v]]) => [k, n, v ? formatPrice(v) : '']);
   const top = (m, n = 8) => [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'de')).slice(0, n);
@@ -2952,12 +3008,12 @@ function renderStats() {
   const tile = (v, l, filter) => `<button type="button" class="tile"${filter ? ` data-goto='${esc(JSON.stringify(filter))}'` : ' disabled'}><b>${esc(String(v))}</b><span>${esc(l)}</span></button>`;
   $('#statsView').innerHTML = `
     <div class="tiles">
-      ${tile(act.length, act.length === 1 ? 'Teil im Schrank' : 'Teile im Schrank', {})}
+      ${tile(nPieces, nPieces === 1 ? 'Teil im Schrank' : 'Teile im Schrank', {})}
       ${tile(formatPrice(sum(act)) || '0,00 €', 'Gesamtwert (Kaufpreis)')}
       ${tile(outfits.length, outfits.length === 1 ? 'Outfit' : 'Outfits')}
       ${tile(`${act.length ? Math.round(100 * worn30 / act.length) : 0} %`, `in 30 Tagen getragen (${wears30}× insgesamt)`)}
       ${tile(never.length, 'noch nie getragen', { getragen: 'nie' })}
-      ${tile(act.filter((i) => i.waesche).length, 'in der Wäsche', { waesche: 'ja' })}
+      ${tile(act.reduce((s2, i) => s2 + washN(i), 0), 'Stück in der Wäsche', { waesche: 'ja' })}
     </div>
     <h3>Nach Kategorie</h3>${barsHtml(catRows)}
     ${colors.length ? `<h3>Farben</h3>${barsHtml(colors)}` : ''}
@@ -2990,7 +3046,7 @@ function wirePlanner() {
   document.addEventListener('change', (e) => { if (e.target.closest('.wearbox') && e.target.type === 'date') onWearDate(e); });
   $('#count').addEventListener('click', async (e) => {
     if (!e.target.closest('[data-unwash-all]')) return;
-    await setWash(items.filter((i) => i.waesche).map((i) => i.id), false);
+    await setWash(items.filter((i) => washN(i)).map((i) => i.id), false);
     await afterChange();
     toast('Alles aus der Wäsche');
   });
@@ -3067,12 +3123,25 @@ function wirePlanner() {
   });
   $('#packItems').addEventListener('click', (e) => {
     const c = e.target.closest('[data-pack-check]');
-    if (c) return updatePack((p) => { const s = new Set(p.checked || []); const id = c.dataset.packCheck; s.has(id) ? s.delete(id) : s.add(id); p.checked = [...s]; });
+    if (c) return updatePack((p) => {
+      normPack(p); const it = items.find((i) => i.id === c.dataset.packCheck); if (!it) return;
+      const want = packWant(p, it), done = packDone(p, it);
+      p.packed[it.id] = done >= want ? 0 : done + 1; // ein Stück mehr; wenn alle: wieder leer
+    });
+    const w = e.target.closest('[data-pack-want]');
+    if (w) return updatePack((p) => {
+      normPack(p); const [step, id] = w.dataset.packWant.split(/:(.*)/s); const it = items.find((i) => i.id === id); if (!it) return;
+      p.want[id] = Math.max(1, Math.min(qty(it), packWant(p, it) + Number(step)));
+      if ((p.packed[id] || 0) > p.want[id]) p.packed[id] = p.want[id];
+    });
     const r = e.target.closest('[data-pack-remove]');
-    if (r) updatePack((p) => { p.itemIds = (p.itemIds || []).filter((x) => x !== r.dataset.packRemove); p.checked = (p.checked || []).filter((x) => x !== r.dataset.packRemove); });
+    if (r) updatePack((p) => { normPack(p); const id = r.dataset.packRemove; p.itemIds = (p.itemIds || []).filter((x) => x !== id); delete p.want[id]; delete p.packed[id]; });
   });
   $('#packAddItems').addEventListener('click', () => {
-    openItemPicker(packItemIds(curPack()), (next) => updatePack((p) => { p.itemIds = next; p.checked = (p.checked || []).filter((x) => next.includes(x)); }));
+    openItemPicker(packItemIds(curPack()), (next) => updatePack((p) => {
+      normPack(p); p.itemIds = next;
+      for (const k of [...Object.keys(p.want), ...Object.keys(p.packed)]) if (!next.includes(k)) { delete p.want[k]; delete p.packed[k]; }
+    }));
   });
   $('#packAddOutfit').addEventListener('click', () => {
     openOutfitPicker('Outfit hinzufügen', (id) => {
@@ -3081,7 +3150,7 @@ function wirePlanner() {
       toast('Teile des Outfits hinzugefügt');
     });
   });
-  $('#packReset').addEventListener('click', () => updatePack((p) => { p.checked = []; }));
+  $('#packReset').addEventListener('click', () => updatePack((p) => { normPack(p); p.packed = {}; }));
   $('#packDelete').addEventListener('click', async () => {
     const id = pk.id; pk = null;
     $('#packDlg').close();
@@ -3585,7 +3654,7 @@ function exportCsv() {
       if (k === 'wunsch') return it.wunsch ? 'ja' : '';
       if (k === 'anlass' || k === 'jahreszeit' || FIELD[k]) return cell(fieldText(it, k));
       if (k === 'photos') return (it.photos || []).length;
-      if (k === 'waesche') return it.waesche ? 'ja' : '';
+      if (k === 'waesche') return washN(it) ? (qty(it) > 1 ? washN(it) : 'ja') : '';
       if (k === 'nworn') return wornCount(it);
       if (k === 'lastworn') return formatDate(lastWorn(it));
       return cell(it[k]);
@@ -3786,6 +3855,8 @@ function wireEvents() {
 
   // Datum leeren, Preis beim Verlassen schön formatieren, ungültigen Preis/Link markieren
   $('#fieldGrid').addEventListener('click', (e) => {
+    const st = e.target.closest('[data-step]');
+    if (st) { const inp = st.parentElement.querySelector('input'); inp.value = Math.min(99, Math.max(1, (parseInt(inp.value, 10) || 1) + Number(st.dataset.step))); return; }
     const c = e.target.closest('[data-clear]');
     if (c) { $('#editForm').elements[c.dataset.clear].value = ''; }
   });
@@ -4148,6 +4219,13 @@ async function init() {
 }
 /* ---------------- App-Updates ---------------- */
 let swReg = null;
+/** Ist gerade etwas in Bearbeitung, das beim Neuladen verloren ginge? */
+const editing = () => ['#cropDlg', '#editor', '#outfitEditor', '#packDlg'].some((sel) => $(sel)?.open) || photoTasks.size > 0;
+window.addEventListener('beforeunload', (e) => {
+  if (!editing()) return;
+  e.preventDefault();
+  e.returnValue = ''; // Browser fragt „Seite verlassen?“
+});
 async function registerSW() {
   if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost')) return;
   try {

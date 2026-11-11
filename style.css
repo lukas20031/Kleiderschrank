@@ -585,3 +585,50 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 18px 0 0; }
 .croptools .seg.tools { min-width: 0; }
 .croptools .seg.tools button { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 12px; padding: 9px 1px; }
 #zoomRow { gap: 8px; }
+
+/* Anzahl */
+.unit.count { display: flex; align-items: center; gap: 8px; }
+.unit.count input { width: 64px; text-align: center; flex: 0 0 auto; }
+.unit.count .chipbtn { width: 40px; height: 38px; padding: 0; font-size: 20px; line-height: 1; }
+.washstep { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.washstep .chipbtn { width: 34px; height: 32px; padding: 0; font-size: 18px; }
+.washstep.active b { color: #2f6f9e; }
+@media (prefers-color-scheme: dark) { .washstep.active b { color: #8cc2ea; } }
+
+/* Rahmen auch bei vollem Bild sichtbar und gut greifbar */
+.cropstage { padding: 26px; }
+.cropwrap { overflow: visible; }
+.cropbox { outline: 2px solid #fff; outline-offset: 0; }
+.cropbox .h { width: 44px; height: 44px; z-index: 2; }
+.cropbox .h::after { width: 18px; height: 18px; }
+.cropbox .h[data-h="nw"] { left: -16px; top: -16px; }
+.cropbox .h[data-h="ne"] { right: -16px; top: -16px; }
+.cropbox .h[data-h="sw"] { left: -16px; bottom: -16px; }
+.cropbox .h[data-h="se"] { right: -16px; bottom: -16px; }
+.cropbox .h[data-h="nw"]::after { left: 12px; top: 12px; }
+.cropbox .h[data-h="ne"]::after { right: 12px; top: 12px; }
+.cropbox .h[data-h="sw"]::after { left: 12px; bottom: 12px; }
+.cropbox .h[data-h="se"]::after { right: 12px; bottom: 12px; }
+/* Seitengriffe: unsichtbare Fläche an jeder Kante plus kleiner Balken in der Mitte */
+.cropbox .e { position: absolute; z-index: 1; }
+.cropbox .e[data-h="n"], .cropbox .e[data-h="s"] { left: 22px; right: 22px; height: 30px; cursor: ns-resize; }
+.cropbox .e[data-h="n"] { top: -15px; } .cropbox .e[data-h="s"] { bottom: -15px; }
+.cropbox .e[data-h="w"], .cropbox .e[data-h="e"] { top: 22px; bottom: 22px; width: 30px; cursor: ew-resize; }
+.cropbox .e[data-h="w"] { left: -15px; } .cropbox .e[data-h="e"] { right: -15px; }
+.cropbox .e::after { content: ""; position: absolute; background: #fff; border-radius: 3px; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.cropbox .e[data-h="n"]::after, .cropbox .e[data-h="s"]::after { width: 28px; height: 5px; }
+.cropbox .e[data-h="w"]::after, .cropbox .e[data-h="e"]::after { width: 5px; height: 28px; }
+/* Hinter dem Foto-Editor scrollt nichts mit; kein „Ziehen zum Aktualisieren“, solange ein Dialog offen ist */
+.cropdlg, .cropstage { overscroll-behavior: none; }
+.cropdlg { touch-action: none; }
+.cropdlg .croptools, .cropdlg .sheethead { touch-action: manipulation; }
+html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscroll-behavior: none; }
+.sheetbody { overscroll-behavior: contain; }
+/* Packliste: Stückzahlen */
+.pitem .pwant { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.pitem .pwant .chipbtn { width: 28px; height: 26px; padding: 0; font-size: 16px; }
+.pitem .pwant b { color: var(--ink); min-width: 12px; text-align: center; }
+.pitem .oname { display: flex; flex-direction: column; align-items: flex-start; }
+.pcheck { font-size: 11px; width: 34px; height: 34px; }
+.pitem.part .pcheck { border-color: var(--brand); color: var(--brand); }
+@media (prefers-color-scheme: dark) { .pitem.part .pcheck { border-color: #8fd0c6; color: #8fd0c6; } }
