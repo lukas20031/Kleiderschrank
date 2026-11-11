@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.4.1';
+const APP_VERSION = '2.6.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -479,6 +479,8 @@ const Store = () => (provKey() === 'dropbox' ? DropboxStore : OneDriveStore);
 
 /* ---------------- Zustand ---------------- */
 let items = [];
+let wishes = [];         // Teile auf der Wunschliste (wunsch: true)
+const findItem = (id) => items.find((i) => i.id === id) || wishes.find((i) => i.id === id);
 let packlists = [];       // { id, name, von, bis, itemIds: [], checked: [], notiz }
 let outfits = [];          // { id, name, itemIds: [], notiz, createdAt, updatedAt }            // sichtbare (nicht gelöschte) Teile
 let photoMap = new Map();  // photoId -> Datensatz {id, itemId, thumb, full, pendingUpload, pendingDelete}
@@ -486,10 +488,13 @@ const urlCache = new Map();
 const filters = JSON.parse(localStorage.getItem('ks_filters') || '{}');
 
 async function loadState() {
-  items = (await DB.all('items')).filter((i) => !i._deleted);
+  const all = (await DB.all('items')).filter((i) => !i._deleted);
+  // Wunschliste: eigene Liste, taucht sonst nirgends auf (Outfits, Statistik, Planer …)
+  items = all.filter((i) => !i.wunsch);
+  wishes = all.filter((i) => i.wunsch);
   outfits = (await DB.all('outfits')).filter((o) => !o._deleted);
   packlists = (await DB.all('packlisten')).filter((o) => !o._deleted);
-  if (await migrateItems(items) && Auth.signedIn()) scheduleSync();
+  if (await migrateItems(all) && Auth.signedIn()) scheduleSync();
   photoMap = new Map((await DB.all('photos')).map((p) => [p.id, p]));
 }
 
@@ -1559,10 +1564,10 @@ function renderFilters() {
 }
 
 /** Teile nach Suchtext, Filtern und Sortierung */
-function filterItems(query, fState, sort = 'new') {
+function filterItems(query, fState, sort = 'new', pool = items) {
   const q = String(query || '').trim().toLowerCase();
   const terms = q ? q.split(/\s+/) : [];
-  let list = items.filter((it) => {
+  let list = pool.filter((it) => {
     if (!matchSpecial(it, fState)) return false;
     for (const [k, v] of Object.entries(fState)) {
       if (!v || SPECIAL_KEYS.includes(k)) continue;
@@ -1575,6 +1580,7 @@ function filterItems(query, fState, sort = 'new') {
   });
   const cmp = (a, b, k) => (k === 'name' ? 0 : String(a[k] || '').localeCompare(String(b[k] || ''), 'de')) || itemTitle(a).localeCompare(itemTitle(b), 'de');
   if (sort === 'new') list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  else if (sort === 'fav') list.sort((a, b) => !!b.favorit - !!a.favorit || String(b.createdAt).localeCompare(String(a.createdAt)));
   else if (sort === 'kategorie') list.sort((a, b) => catRank(a) - catRank(b) || cmp(a, b, 'name'));
   else if (sort === 'worn_recent') list.sort((a, b) => lastWorn(b).localeCompare(lastWorn(a)) || cmp(a, b, 'name'));
   else if (sort === 'worn_old') list.sort((a, b) => lastWorn(a).localeCompare(lastWorn(b)) || cmp(a, b, 'name'));
@@ -1596,15 +1602,16 @@ function byPrice(a, b, sort) {
   return sort === 'price_asc' ? a - b : b - a;
 }
 const SORTS = {
-  items: [['new', 'Neueste'], ['name', 'Name'], ['kategorie', 'Kategorie'], ['lagerort', 'Lagerort'], ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch'],
+  items: [['new', 'Neueste'], ['fav', 'Favoriten zuerst'], ['name', 'Name'], ['kategorie', 'Kategorie'], ['lagerort', 'Lagerort'], ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch'],
     ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'], ['cpw', 'Preis pro Tragen']],
-  outfits: [['new', 'Neueste'], ['name', 'Name'], ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'],
+  outfits: [['new', 'Neueste'], ['fav', 'Favoriten zuerst'], ['name', 'Name'], ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'],
     ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch']],
 };
-const sortKey = (t) => (t === 'outfits' ? 'ks_osort' : 'ks_sort');
+SORTS.wish = [['new', 'Neueste'], ['fav', 'Favoriten zuerst'], ['name', 'Name'], ['kategorie', 'Kategorie'], ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch']];
+const sortKey = (t) => ({ outfits: 'ks_osort', wish: 'ks_wsort' }[t] || 'ks_sort');
 /** Sortier-Auswahl passend zum Tab (Teile/Outfits haben eigene Sortierung) */
 function renderSortOptions() {
-  const t = tab === 'outfits' ? 'outfits' : 'items';
+  const t = ['outfits', 'wish'].includes(tab) ? tab : 'items';
   const sel = $('#sort');
   if (sel.dataset.for === t) return;
   sel.dataset.for = t;
@@ -1616,6 +1623,7 @@ function sortOutfits(list, sort) {
   const name = (a, b) => outfitTitle(a).localeCompare(outfitTitle(b), 'de');
   const by = {
     new: (a, b) => String(b.createdAt).localeCompare(String(a.createdAt)),
+    fav: (a, b) => !!b.favorit - !!a.favorit || String(b.createdAt).localeCompare(String(a.createdAt)),
     name,
     worn_recent: (a, b) => lastWorn(b).localeCompare(lastWorn(a)) || name(a, b),
     worn_old: (a, b) => lastWorn(a).localeCompare(lastWorn(b)) || name(a, b),
@@ -1632,7 +1640,7 @@ function itemCardHtml(it, { selected = null } = {}) {
   const pid = (it.photos || [])[0];
   const url = pid ? thumbUrl(pid) : '';
   // Ohne Bezeichnung steht die Kategorie schon im Titel – dann Marke statt Kategorie zeigen
-  const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse].filter(Boolean).join(' · ');
+  const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse, it.wunsch ? formatPrice(it.preis) : ''].filter(Boolean).join(' · ');
   const farben = fieldValues(it, 'farben');
   const n = (it.photos || []).length;
   const flags = [n > 1 && selected === null ? `${n} Fotos` : '', it.waesche ? 'Wäsche' : '', it.status || ''].filter(Boolean);
@@ -1641,23 +1649,25 @@ function itemCardHtml(it, { selected = null } = {}) {
       ${flags.length ? `<span class="flags">${flags.map((f) => `<span class="nphotos${f === 'Wäsche' ? ' wash' : f.endsWith('Fotos') ? '' : ' st'}">${esc(f)}</span>`).join('')}</span>` : ''}
       ${selected !== null ? `<span class="check">${selected ? '✓' : ''}</span>` : ''}
       ${it._dirty && Auth.configured && selected === null ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
-      <div class="info"><div class="title${it.name ? '' : ' auto'}">${esc(itemTitle(it))}</div>
+      <div class="info"><div class="title${it.name ? '' : ' auto'}">${it.favorit ? '<span class="fav" title="Favorit">♥</span> ' : ''}${esc(itemTitle(it))}</div>
         <div class="sub">${farben.length ? `<span class="dots" title="${esc(farben.join(', '))}">${farben.slice(0, 5).map(swatch).join('')}</span>` : ''}${esc(sub || it.lagerort || '')}</div></div>
     </button>`;
 }
 
-let tab = ['outfits', 'plan', 'stats'].includes(localStorage.getItem('ks_tab')) ? localStorage.getItem('ks_tab') : 'items';
+let tab = ['outfits', 'wish', 'plan', 'stats'].includes(localStorage.getItem('ks_tab')) ? localStorage.getItem('ks_tab') : 'items';
 function render() {
   document.body.dataset.tab = tab;
   for (const b of document.querySelectorAll('#tabbar [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
   $('#planView').hidden = tab !== 'plan';
   $('#statsView').hidden = tab !== 'stats';
   if (tab === 'plan' || tab === 'stats') {
-    $('#grid').innerHTML = ''; $('#count').textContent = ''; $('#empty').hidden = true; $('#emptyOutfits').hidden = true;
+    $('#grid').innerHTML = ''; $('#count').textContent = ''; $('#empty').hidden = true; $('#emptyOutfits').hidden = true; $('#emptyWish').hidden = true;
     return tab === 'plan' ? renderPlan() : renderStats();
   }
   renderSortOptions();
   if (tab === 'outfits') return renderOutfits();
+  if (tab === 'wish') return renderWishes();
+  $('#emptyWish').hidden = true;
   renderFilters();
   const list = filteredItems();
   const scope = items.filter((it) => matchSpecial(it, { status: filters.status }));
@@ -1670,6 +1680,32 @@ function render() {
   $('#emptyOutfits').hidden = true;
   $('#grid').className = 'grid';
   $('#grid').innerHTML = list.map((it) => itemCardHtml(it)).join('');
+}
+
+/* ---------------- Wunschliste ---------------- */
+function renderWishes() {
+  $('#filters').hidden = true;
+  const list = filterItems($('#search').value, {}, $('#sort').value, wishes);
+  const sum = list.reduce((s, it) => s + (hasValue(it.preis) ? Number(it.preis) : 0), 0);
+  $('#count').textContent = wishes.length
+    ? `${list.length === wishes.length ? wishes.length : `${list.length} von ${wishes.length}`} ${wishes.length === 1 ? 'Wunsch' : 'Wünsche'}${sum ? ` · zusammen ${formatPrice(sum)}` : ''}`
+    : '';
+  $('#empty').hidden = true;
+  $('#emptyOutfits').hidden = true;
+  $('#emptyWish').hidden = wishes.length > 0;
+  $('#grid').className = 'grid';
+  $('#grid').innerHTML = list.map((it) => itemCardHtml(it)).join('');
+}
+/** Gekauft: von der Wunschliste in den Schrank (Kaufdatum = heute, falls leer) */
+async function buyWish(id) {
+  const it = await patchRec('items', id, (r) => {
+    delete r.wunsch;
+    if (!r.kaufdatum) r.kaufdatum = isoDay();
+  });
+  if (!it) return;
+  $('#detail').close();
+  await afterChange();
+  toast(`„${itemTitle(it)}“ ist jetzt in deinem Schrank`);
 }
 
 /* ---------------- Outfits ---------------- */
@@ -1725,7 +1761,8 @@ function outfitFilterHtml() {
     if (cur && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')}</select></label>`;
-  }).join('') + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
+  }).join('') + `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${outfitFilters.fav === 'ja' ? ' selected' : ''}>Nur Favoriten (${outfits.filter((o) => o.favorit).length})</option></select></label>`
+    + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
 }
 function renderOutfits() {
   $('#filters').innerHTML = outfitFilterHtml();
@@ -1734,7 +1771,7 @@ function renderOutfits() {
   $('#filterToggle').classList.toggle('active', nf > 0);
   const q = $('#search').value.trim().toLowerCase();
   const list = outfits
-    .filter((o) => Object.entries(outfitFilters).every(([k, v]) => !v || (o[k] || []).includes(v)))
+    .filter((o) => Object.entries(outfitFilters).every(([k, v]) => !v || (k === 'fav' ? !!o.favorit : (o[k] || []).includes(v))))
     .filter((o) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q));
   sortOutfits(list, $('#sort').value);
   $('#count').textContent = outfits.length
@@ -1752,7 +1789,7 @@ function outfitCardHtml(o) {
   return `<button type="button" class="card outfit" data-outfit="${esc(o.id)}">
       ${collageHtml(o)}
       ${o._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
-      <div class="info"><div class="title${o.name ? '' : ' auto'}">${esc(outfitTitle(o))}</div><div class="sub">${esc(sub.join(' · '))}</div></div>
+      <div class="info"><div class="title${o.name ? '' : ' auto'}">${o.favorit ? '<span class="fav" title="Favorit">♥</span> ' : ''}${esc(outfitTitle(o))}</div><div class="sub">${esc(sub.join(' · '))}</div></div>
     </button>`;
 }
 
@@ -1777,6 +1814,7 @@ function openOutfitDetail(id) {
   $('#outfitDetailMeta').innerHTML = meta.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('');
   $('#outfitDetailMeta').hidden = !meta.length;
   renderWearBox('#outfitWear', 'outfit', o);
+  renderFav('#outfitFav', o);
   if ($('#outfitDetail').open) $('#outfitDetail').close();
   $('#outfitDetail').showModal();
 }
@@ -1878,7 +1916,7 @@ function renderPicker() {
 /* ---------------- Detailansicht ---------------- */
 let detailId = null;
 async function openDetail(id) {
-  const it = items.find((i) => i.id === id);
+  const it = findItem(id);
   if (!it) return;
   detailId = id;
   $('#detailTitle').textContent = itemTitle(it);
@@ -1898,8 +1936,13 @@ async function openDetail(id) {
   const pids = it.photos || [];
   gal.innerHTML = pids.map((pid) => photoFigure(pid, (it.photoTags || {})[pid])).join('');
   renderWearBox('#detailWear', 'item', it);
+  renderFav('#detailFav', it);
+  // Wunschliste: kein Tragen/Outfits, dafür „Gekauft“
+  const wish = !!it.wunsch;
+  $('#detailWear').hidden = wish;
+  $('#detailBuyBox').hidden = !wish;
   // In welchen Outfits kommt das Teil vor?
-  const ofs = outfitsWith(id);
+  const ofs = wish ? [] : outfitsWith(id);
   $('#detailOutfitsBox').hidden = !ofs.length;
   $('#detailOutfits').innerHTML = ofs.map((o) => `<button type="button" class="ochiplink" data-outfit="${esc(o.id)}">${collageHtml(o)}<span>${esc(outfitTitle(o))}</span></button>`).join('');
   // Bereits offen (z. B. unter einem Outfit)? Dann nach oben holen
@@ -2107,12 +2150,13 @@ function openEditor(id = null, copyId = null) {
   form.reset();
   fillDatalists();
   // Beim Duplizieren: alle Angaben übernehmen, aber neue ID, keine Fotos, kein Tragen-Verlauf
-  const orig = id ? items.find((i) => i.id === id) : null;
-  const it = orig || (copyId ? items.find((i) => i.id === copyId) : null);
+  const orig = id ? findItem(id) : null;
+  const it = orig || (copyId ? findItem(copyId) : null);
   ed = {
     id: orig?.id || uid(),
     isNew: !orig,
     status: orig?.status || '',
+    wunsch: it ? !!it.wunsch : tab === 'wish',
     strip: '#photoStrip',
     photos: photosFrom(orig),
     removed: [],
@@ -2124,7 +2168,8 @@ function openEditor(id = null, copyId = null) {
     katAlt: it?.kategorieAlt || '',
   };
   renderKatButton();
-  $('#editTitle').textContent = orig ? 'Bearbeiten' : it ? 'Kopie' : 'Neues Teil';
+  $('#editTitle').textContent = orig ? 'Bearbeiten' : it ? 'Kopie' : ed.wunsch ? 'Neuer Wunsch' : 'Neues Teil';
+  $('#statusField').hidden = ed.wunsch;
   renderStatusSeg();
   phCtx = ed;
   form.elements.bezeichnung.value = it?.name || '';
@@ -2151,7 +2196,7 @@ function openEditor(id = null, copyId = null) {
 async function saveEditor() {
   const form = $('#editForm');
   const now = new Date().toISOString();
-  const prev = items.find((i) => i.id === ed.id);
+  const prev = findItem(ed.id);
   const it = {
     ...(prev || {}),
     id: ed.id,
@@ -2179,6 +2224,7 @@ async function saveEditor() {
   Object.assign(it, ed.kat);
   if (it.kategorie) delete it.kategorieAlt;
   if (!it.status) delete it.status; else delete it.waesche; // Aussortiertes ist nicht in der Wäsche
+  if (ed.wunsch) { it.wunsch = true; delete it.status; delete it.waesche; } else delete it.wunsch;
 
   if (!Object.keys(it.photoTags).length) delete it.photoTags;
   await storePhotos(ed, it.id);
@@ -2246,11 +2292,12 @@ function agoText(s) {
 }
 
 const STATUS = ['Aussortiert', 'Verkauft', 'Verschenkt'];
-const SPECIAL_KEYS = ['status', 'waesche', 'getragen'];
+const SPECIAL_KEYS = ['status', 'waesche', 'getragen', 'fav'];
 /** Status: leer = nur Teile im Schrank, „*“ = alle; Wäsche: ja/nein; Getragen: nie oder seit N Tagen nicht */
 function matchSpecial(it, f) {
   const st = f.status || '';
   if (st === '') { if (it.status) return false; } else if (st !== '*' && it.status !== st) return false;
+  if (f.fav === 'ja' && !it.favorit) return false;
   if (f.waesche === 'ja' && !it.waesche) return false;
   if (f.waesche === 'nein' && it.waesche) return false;
   if (f.getragen === 'nie' && wornCount(it)) return false;
@@ -2261,7 +2308,8 @@ function specialFiltersHtml(f, withStatus) {
   const sel = (key, label, opts) => `<label>${label}<select data-filter="${key}">${opts.map(([v, t]) =>
     `<option value="${v}"${(f[key] || '') === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
   const count = (fn) => items.filter((it) => !it.status && fn(it)).length;
-  return (withStatus ? sel('status', 'Status', [['', `Im Schrank (${count(() => true)})`], ...STATUS.map((s) => [s, `${s} (${items.filter((i) => i.status === s).length})`]), ['*', `Alle (${items.length})`]]) : '')
+  const favSel = (cur, n) => `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${cur === 'ja' ? ' selected' : ''}>Nur Favoriten (${n})</option></select></label>`;
+  return favSel(f.fav || '', count((i) => i.favorit)) + (withStatus ? sel('status', 'Status', [['', `Im Schrank (${count(() => true)})`], ...STATUS.map((s) => [s, `${s} (${items.filter((i) => i.status === s).length})`]), ['*', `Alle (${items.length})`]]) : '')
     + sel('waesche', 'Wäsche', [['', 'Alle'], ['ja', `In der Wäsche (${count((i) => i.waesche)})`], ['nein', 'Nicht in der Wäsche']])
     + sel('getragen', 'Getragen', [['', 'Alle'], ['nie', `Noch nie (${count((i) => !wornCount(i))})`], ['30', 'Seit 1 Monat nicht'], ['90', 'Seit 3 Monaten nicht'], ['180', 'Seit 6 Monaten nicht'], ['365', 'Seit 1 Jahr nicht']]);
 }
@@ -2367,7 +2415,7 @@ async function onWearDate(e) {
 /** Offene Ansichten nach einer Änderung neu zeichnen, ohne die Dialoge neu zu öffnen */
 function refreshOpenDetails() {
   if ($('#detail').open && detailId) {
-    const it = items.find((i) => i.id === detailId);
+    const it = findItem(detailId);
     if (it) { renderWearBox('#detailWear', 'item', it); $('#detailTitle').textContent = itemTitle(it); }
   }
   if ($('#outfitDetail').open && outfitDetailId) {
@@ -2379,6 +2427,19 @@ function refreshOpenDetails() {
   }
   if ($('#dayDlg').open && dayOpen) renderDay();
   if ($('#packDlg').open && pk) renderPack();
+}
+
+/* ---------------- Favoriten ---------------- */
+function renderFav(sel, r) {
+  const b = $(sel);
+  b.classList.toggle('active', !!r.favorit);
+  b.innerHTML = r.favorit ? '<span class="fav">♥</span> Favorit' : '♡ Als Favorit markieren';
+  b.setAttribute('aria-pressed', r.favorit ? 'true' : 'false');
+}
+async function toggleFav(store, id) {
+  const r = await patchRec(store, id, (x) => { if (x.favorit) delete x.favorit; else x.favorit = true; });
+  await afterChange();
+  if (r) { renderFav(store === 'items' ? '#detailFav' : '#outfitFav', r); toast(r.favorit ? 'Als Favorit markiert' : 'Favorit entfernt'); }
 }
 
 /* ---------------- Status im Editor ---------------- */
@@ -2614,6 +2675,8 @@ function wirePlanner() {
     await afterChange();
     toast('Alles aus der Wäsche');
   });
+  $('#detailFav').addEventListener('click', () => toggleFav('items', detailId));
+  $('#outfitFav').addEventListener('click', () => toggleFav('outfits', outfitDetailId));
   $('#detailCopy').addEventListener('click', () => { const id = detailId; $('#detail').close(); openEditor(null, id); });
   $('#statusSeg').addEventListener('click', (e) => {
     const b = e.target.closest('[data-status]');
@@ -2788,14 +2851,15 @@ async function switchProvider(key) {
 }
 
 function exportCsv() {
-  const cols = [['Bezeichnung', 'name'], ...CAT_KEYS.map((f) => [f.label, f.key]), ...FIELDS.map((f) => [f.label, f.key]), ['Anlass', 'anlass'], ['Jahreszeit', 'jahreszeit'], ['Notiz', 'notiz'], ['Status', 'status'], ['In der Wäsche', 'waesche'], ['Getragen (Anzahl)', 'nworn'], ['Zuletzt getragen', 'lastworn'], ['Fotos', 'photos'], ['Angelegt', 'createdAt'], ['Geändert', 'updatedAt']];
+  const cols = [['Bezeichnung', 'name'], ...CAT_KEYS.map((f) => [f.label, f.key]), ...FIELDS.map((f) => [f.label, f.key]), ['Anlass', 'anlass'], ['Jahreszeit', 'jahreszeit'], ['Notiz', 'notiz'], ['Status', 'status'], ['In der Wäsche', 'waesche'], ['Getragen (Anzahl)', 'nworn'], ['Zuletzt getragen', 'lastworn'], ['Wunschliste', 'wunsch'], ['Fotos', 'photos'], ['Angelegt', 'createdAt'], ['Geändert', 'updatedAt']];
   const cell = (v) => {
     const s = String(v ?? '');
     return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines = [cols.map((c) => c[0]).join(';')];
-  for (const it of filteredItems()) {
+  for (const it of [...filteredItems(), ...wishes]) {
     lines.push(cols.map(([, k]) => {
+      if (k === 'wunsch') return it.wunsch ? 'ja' : '';
       if (k === 'anlass' || k === 'jahreszeit' || FIELD[k]) return cell(fieldText(it, k));
       if (k === 'photos') return (it.photos || []).length;
       if (k === 'waesche') return it.waesche ? 'ja' : '';
@@ -2847,6 +2911,7 @@ function wireEvents() {
     if (card.dataset.outfit) openOutfitDetail(card.dataset.outfit); else openDetail(card.dataset.id);
   });
   $('#addBtn').addEventListener('click', () => (tab === 'outfits' ? openOutfitEditor() : tab === 'plan' ? openPack() : openEditor()));
+  $('#detailBuy').addEventListener('click', () => buyWish(detailId));
   $('#tabbar').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
     if (!b || b.dataset.tab === tab) return;

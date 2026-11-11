@@ -55,6 +55,10 @@
     <p>Noch keine Outfits.</p>
     <p class="muted">Tippe auf <b>+</b>, um aus deinen Teilen ein Outfit zusammenzustellen.</p>
   </div>
+  <div id="emptyWish" class="empty" hidden>
+    <p>Deine Wunschliste ist leer.</p>
+    <p class="muted">Tippe auf <b>+</b>, um etwas zu notieren, das du kaufen möchtest – mit Fotos, Preis und Link. Nach dem Kauf verschiebst du es mit einem Tipp in den Schrank.</p>
+  </div>
   <div id="empty" class="empty" hidden>
     <p>Noch nichts erfasst.</p>
     <p class="muted">Tippe auf <b>+</b>, um dein erstes Kleidungsstück mit Fotos anzulegen.</p>
@@ -71,6 +75,10 @@
   <button type="button" data-tab="outfits">
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
     <span>Outfits</span>
+  </button>
+  <button type="button" data-tab="wish">
+    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-1.2 12.2a1 1 0 0 1-1 .8H7.2a1 1 0 0 1-1-.8z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/><path d="M12 17.5s-2.6-1.5-2.6-3.2a1.3 1.3 0 0 1 2.6-.4 1.3 1.3 0 0 1 2.6.4c0 1.7-2.6 3.2-2.6 3.2z"/></svg>
+    <span>Wunschliste</span>
   </button>
   <button type="button" data-tab="plan">
     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
@@ -131,7 +139,7 @@
         <textarea name="notiz" rows="3" placeholder="optional"></textarea>
       </label>
 
-      <div class="field">Status
+      <div class="field" id="statusField">Status
         <div class="seg small" id="statusSeg"></div>
         <span class="hint">Aussortierte, verkaufte und verschenkte Teile verschwinden aus der Übersicht (Filter „Status“ zeigt sie wieder), bleiben aber in Outfits erhalten.</span>
       </div>
@@ -246,8 +254,14 @@
   </header>
   <div class="sheetbody">
     <div id="detailPhotos" class="gallery"></div>
+    <button type="button" id="detailFav" class="chipbtn favbtn"></button>
     <dl id="detailFields" class="props"></dl>
     <a id="detailLink" class="linkbtn" target="_blank" rel="noopener noreferrer" hidden>Produkt öffnen <span id="detailLinkHost"></span> ↗</a>
+    <div id="detailBuyBox" class="buybox" hidden>
+      <p>Auf deiner Wunschliste – erscheint nicht im Schrank, in Outfits oder in der Statistik.</p>
+      <button type="button" id="detailBuy" class="primary">Gekauft – in den Schrank verschieben</button>
+      <span class="hint">Alle Angaben und Fotos bleiben erhalten; ein leeres Kaufdatum wird auf heute gesetzt.</span>
+    </div>
     <div id="detailWear" class="wearbox"></div>
     <div id="detailOutfitsBox" hidden>
       <h3>In Outfits</h3>
@@ -268,6 +282,7 @@
   <div class="sheetbody">
     <div id="outfitDetailPhotos" class="gallery" hidden></div>
     <div id="outfitDetailLook" class="outfitlook" hidden></div>
+    <button type="button" id="outfitFav" class="chipbtn favbtn"></button>
     <dl id="outfitDetailMeta" class="props" hidden></dl>
     <p id="outfitDetailNote" class="onote" hidden></p>
     <div id="outfitWear" class="wearbox"></div>

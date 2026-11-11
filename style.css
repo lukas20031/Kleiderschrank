@@ -319,7 +319,7 @@ code { font-size: 12.5px; background: var(--card); border: 1px solid var(--line)
 /* Untere Leiste Teile / Outfits */
 body { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
 .tabbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: grid; grid-template-columns: repeat(4, 1fr);
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom);
 }
 .tabbar button { border: 0; background: none; padding: 8px 0 9px; display: grid; justify-items: center; gap: 2px; font-size: 12px; color: var(--muted); }
@@ -497,3 +497,16 @@ button.orow { grid-template-columns: 52px 1fr; }
 .phototagbox .row input { width: auto; }
 .phototagbox .row button { flex: 0 0 auto; }
 .phototagbox { grid-template-columns: minmax(0, 1fr); }
+
+/* Favoriten */
+.fav { color: #d9485f; }
+.favbtn { margin: 12px 0 4px; }
+.favbtn.active { background: var(--card); color: var(--ink); border-color: #d9485f; font-weight: 600; }
+
+/* Wunschliste */
+body[data-tab="wish"] #filterToggle, body[data-tab="wish"] #filters { display: none !important; }
+.buybox { margin: 14px 0 6px; padding: 12px; border: 1px dashed var(--line); border-radius: var(--radius); background: var(--card); }
+.buybox p { margin: 0 0 10px; font-size: 14px; }
+.buybox .primary { width: 100%; padding: 12px; }
+.buybox .hint { display: block; margin-bottom: 0; }
+.tabbar button span { white-space: nowrap; font-size: 11px; }
