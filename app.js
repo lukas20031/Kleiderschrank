@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.7.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1522,13 +1522,14 @@ function valuesFor(key, pool = items) {
 
 const SEASON_DEF = { key: 'jahreszeit', label: 'Jahreszeit', order: new Map(JAHRESZEITEN.map((v, i) => [v, i])) };
 /** Auswahlfelder der Filter als HTML (für die Übersicht und die Teile-Auswahl im Outfit) */
-function filterSelectsHtml(fState, withStatus = true) {
-  const defs = [...CAT_KEYS, ...FIELDS.filter((f) => !f.noFilter), { key: 'anlass', label: 'Anlass' }, SEASON_DEF];
+function filterSelectsHtml(fState, withStatus = true, base = items) {
+  const wish = base === wishes;
+  const defs = [...CAT_KEYS, ...FIELDS.filter((f) => !f.noFilter && !(wish && WISH_HIDDEN.includes(f.key))), { key: 'anlass', label: 'Anlass' }, SEASON_DEF];
   // Unterkategorie/Art nur aus der gewählten Kategorie anbieten
-  const poolK = fState.kategorie ? items.filter((i) => i.kategorie === fState.kategorie) : items;
+  const poolK = fState.kategorie ? base.filter((i) => i.kategorie === fState.kategorie) : base;
   const poolU = fState.unterkategorie ? poolK.filter((i) => i.unterkategorie === fState.unterkategorie) : poolK;
   return defs.map((f) => {
-    const pool = f.key === 'unterkategorie' ? poolK : f.key === 'typ' ? poolU : items;
+    const pool = f.key === 'unterkategorie' ? poolK : f.key === 'typ' ? poolU : base;
     const vals = [...valuesFor(f.key, pool).entries()];
     if (CAT_KEYS.some((c) => c.key === f.key)) {
       const rank = (v) => {
@@ -1543,11 +1544,12 @@ function filterSelectsHtml(fState, withStatus = true) {
     }
     const cur = fState[f.key] || '';
     if (cur && cur !== CAT_NONE && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
-    const none = f.key === 'kategorie' ? items.filter((i) => !i.kategorie).length : 0;
+    const none = f.key === 'kategorie' ? base.filter((i) => !i.kategorie).length : 0;
     return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
       vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')
     }${none ? `<option value="${CAT_NONE}"${cur === CAT_NONE ? ' selected' : ''}>Nicht zugeordnet (${none})</option>` : ''}</select></label>`;
-  }).join('') + specialFiltersHtml(fState, withStatus) + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
+  }).join('') + (wish ? `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${fState.fav === 'ja' ? ' selected' : ''}>Nur Favoriten (${wishes.filter((i) => i.favorit).length})</option></select></label>`
+    : specialFiltersHtml(fState, withStatus)) + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
 }
 /** Filterwert ändern; übergeordnete Kategorie setzt Unterkategorie/Art zurück */
 function setFilter(fState, k, v) {
@@ -1585,6 +1587,7 @@ function filterItems(query, fState, sort = 'new', pool = items) {
   else if (sort === 'worn_recent') list.sort((a, b) => lastWorn(b).localeCompare(lastWorn(a)) || cmp(a, b, 'name'));
   else if (sort === 'worn_old') list.sort((a, b) => lastWorn(a).localeCompare(lastWorn(b)) || cmp(a, b, 'name'));
   else if (sort === 'worn_most') list.sort((a, b) => wornCount(b) - wornCount(a) || cmp(a, b, 'name'));
+  else if (sort === 'worn_least') list.sort((a, b) => wornCount(a) - wornCount(b) || lastWorn(a).localeCompare(lastWorn(b)) || cmp(a, b, 'name'));
   else if (sort === 'cpw') list.sort((a, b) => (costPerWear(b) ?? -1) - (costPerWear(a) ?? -1) || cmp(a, b, 'name'));
   else if (sort === 'cpw_asc') list.sort((a, b) => byPrice(costPerWear(a), costPerWear(b), 'price_asc') || cmp(a, b, 'name'));
   else if (sort === 'price_desc' || sort === 'price_asc') list.sort((a, b) => byPrice(itemPrice(a), itemPrice(b), sort) || cmp(a, b, 'name'));
@@ -1604,7 +1607,7 @@ function byPrice(a, b, sort) {
 }
 const SORTS = {
   items: [['new', 'Neueste'], ['fav', 'Favoriten zuerst'], ['name', 'Name'], ['kategorie', 'Kategorie'], ['lagerort', 'Lagerort'], ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch'],
-    ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'], ['cpw', 'Preis pro Tragen: hoch'], ['cpw_asc', 'Preis pro Tragen: niedrig']],
+    ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'], ['worn_least', 'Am seltensten getragen'], ['cpw', 'Preis pro Tragen: hoch'], ['cpw_asc', 'Preis pro Tragen: niedrig']],
   outfits: [['new', 'Neueste'], ['fav', 'Favoriten zuerst'], ['name', 'Name'], ['worn_recent', 'Zuletzt getragen'], ['worn_old', 'Lange nicht getragen'], ['worn_most', 'Am häufigsten getragen'],
     ['price_desc', 'Preis: hoch → niedrig'], ['price_asc', 'Preis: niedrig → hoch']],
 };
@@ -1715,9 +1718,13 @@ function render() {
 
 /* ---------------- Wunschliste ---------------- */
 const WISH_HIDDEN = ['kaufdatum', 'lagerort', 'zustand'];
+const wishFilters = JSON.parse(localStorage.getItem('ks_wfilters') || '{}');
 function renderWishes() {
-  $('#filters').hidden = true;
-  const list = filterItems($('#search').value, {}, $('#sort').value, wishes);
+  $('#filters').innerHTML = filterSelectsHtml(wishFilters, false, wishes);
+  const nf = Object.entries(wishFilters).filter(([, v]) => v).length;
+  $('#filterCount').textContent = nf ? `(${nf})` : '';
+  $('#filterToggle').classList.toggle('active', nf > 0);
+  const list = filterItems($('#search').value, wishFilters, $('#sort').value, wishes);
   const sum = list.reduce((s, it) => s + (hasValue(it.preis) ? Number(it.preis) : 0), 0);
   $('#count').textContent = wishes.length
     ? `${list.length === wishes.length ? wishes.length : `${list.length} von ${wishes.length}`} ${wishes.length === 1 ? 'Wunsch' : 'Wünsche'}${sum ? ` · zusammen ${formatPrice(sum)}` : ''}`
@@ -2486,10 +2493,10 @@ const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'A
 const outfitsPlannedOn = (d) => outfits.filter((o) => (o.geplant || []).includes(d));
 const outfitsWornOn = (d) => outfits.filter((o) => (o.getragen || []).includes(d));
 const itemsWornOn = (d) => items.filter((it) => (it.getragen || []).includes(d));
+/** Ganzes Outfitbild (Foto oder Collage, wie in der Outfit-Übersicht gewählt) für Kalender & Listen */
 function firstPhoto(o) {
-  if ((o.photos || [])[0]) return `<img class="${isPng(o.photos[0]) ? 'cut' : ''}" src="${thumbUrl(o.photos[0])}" alt="">`;
-  const it = outfitItemsSorted(o).find((i) => (i.photos || []).length);
-  return it ? photoCell(it) : '';
+  if (!(o.photos || []).length && !outfitItems(o).length) return '';
+  return collageHtml(o, false, outfitView !== 'collage');
 }
 function renderPlan() {
   const y = calMonth.getFullYear(), m = calMonth.getMonth();
@@ -2686,14 +2693,14 @@ function renderStats() {
     ${colors.length ? `<h3>Farben</h3>${barsHtml(colors)}` : ''}
     ${brands.length ? `<h3>Marken</h3>${barsHtml(brands)}` : ''}
     ${zustRows.length ? `<h3>Zustand</h3>${barsHtml(zustRows)}` : ''}
-    ${act.length ? `<h3>Getragen</h3>
+    ${act.length ? `<div class="sechead"><h3>Getragen</h3><button type="button" class="chipbtn" data-goto-sort="${wornLow ? 'worn_least' : 'worn_most'}">Alle anzeigen</button></div>
       <div class="seg small cpwseg"><button type="button" data-worn="high" class="${wornLow ? '' : 'active'}">Am häufigsten</button><button type="button" data-worn="low" class="${wornLow ? 'active' : ''}">Am seltensten</button></div>
       ${most.length ? itemRowsHtml(most, (it) => (wornCount(it) ? `${wornCount(it)}× · zuletzt ${agoText(lastWorn(it))}` : 'noch nie getragen')) : '<p class="muted">Noch nichts als getragen eingetragen.</p>'}` : ''}
     ${long.length ? `<div class="sechead"><h3>Lange nicht getragen</h3><button type="button" class="chipbtn" data-goto='{"getragen":"90"}'>Alle anzeigen</button></div>${itemRowsHtml(long, (it) => `zuletzt ${agoText(lastWorn(it))} · ${wornCount(it)}×`)}` : ''}
     ${cpw.length ? `<div class="sechead"><h3>Preis pro Tragen</h3><button type="button" class="chipbtn" data-goto-sort="${cpwLow ? 'cpw_asc' : 'cpw'}">Alle anzeigen</button></div>
       <div class="seg small cpwseg"><button type="button" data-cpw="high" class="${cpwLow ? '' : 'active'}">Höchster</button><button type="button" data-cpw="low" class="${cpwLow ? 'active' : ''}">Niedrigster</button></div>${itemRowsHtml(cpw, (it) => `${formatPrice(costPerWear(it))} pro Tragen · ${formatPrice(it.preis)}, ${wornCount(it)}× getragen`)}` : ''}
     ${gone.length ? `<h3>Nicht mehr im Schrank</h3>${barsHtml(gone.map(([s, l]) => [s, l.length, sum(l) ? `Kaufpreis ${formatPrice(sum(l))}` : '']))}` : ''}
-    <p class="hint">Gezählt werden Teile im Schrank, also ohne Aussortierte, Verkaufte und Verschenkte. Noch nie getragene Teile zählen beim Preis pro Tragen mit vollem Preis.</p>`;
+`;
 }
 /** Aus der Statistik in die gefilterte Teile-Liste springen */
 function gotoItems(f = {}, sort = null) {
@@ -3086,8 +3093,9 @@ function wireEvents() {
       localStorage.setItem('ks_ofilters', JSON.stringify(outfitFilters));
       return render();
     }
-    setFilter(filters, k, e.target.value);
-    localStorage.setItem('ks_filters', JSON.stringify(filters));
+    const [st, key] = tab === 'wish' ? [wishFilters, 'ks_wfilters'] : [filters, 'ks_filters'];
+    setFilter(st, k, e.target.value);
+    localStorage.setItem(key, JSON.stringify(st));
     render();
   });
   $('#filters').addEventListener('click', (e) => {
@@ -3097,8 +3105,9 @@ function wireEvents() {
       localStorage.setItem('ks_ofilters', '{}');
       return render();
     }
-    for (const k of Object.keys(filters)) delete filters[k];
-    localStorage.setItem('ks_filters', '{}');
+    const [st, key] = tab === 'wish' ? [wishFilters, 'ks_wfilters'] : [filters, 'ks_filters'];
+    for (const k of Object.keys(st)) delete st[k];
+    localStorage.setItem(key, '{}');
     render();
   });
 

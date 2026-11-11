@@ -384,7 +384,7 @@ body { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
 
 /* Planer & Statistik: Werkzeugleiste ausblenden */
 body[data-tab="plan"] .toolbar, body[data-tab="plan"] #filters,
-body[data-tab="stats"] .toolbar, body[data-tab="stats"] #filters, body[data-tab="stats"] #addBtn { display: none !important; }
+body[data-tab="stats"] .toolbar, body[data-tab="stats"] #filters, body[data-tab="stats"] #addBtn, body[data-tab="plan"] #addBtn { display: none !important; }
 .view { padding: 4px 0 8px; }
 .view h3 { font-size: 15px; margin: 22px 0 8px; }
 .sechead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 22px 0 8px; }
@@ -425,11 +425,11 @@ body[data-tab="stats"] .toolbar, body[data-tab="stats"] #filters, body[data-tab=
 @media (prefers-color-scheme: dark) { .calhead .iconbtn { color: #8fd0c6; } }
 .calgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
 .calgrid .wd { text-align: center; font-size: 11px; color: var(--muted); padding: 2px 0 4px; }
-.day { position: relative; aspect-ratio: 3/4; border: 0; border-radius: 8px; background: var(--bg); padding: 0; overflow: hidden; color: var(--ink); }
+.day { position: relative; aspect-ratio: 3/5; border: 0; border-radius: 8px; background: var(--bg); padding: 0; overflow: hidden; color: var(--ink); }
 .day.other { opacity: .4; }
 .day.today { box-shadow: inset 0 0 0 2px var(--accent); }
 .day .dn { position: absolute; top: 2px; left: 5px; font-size: 12px; font-weight: 600; z-index: 1; }
-.day .dthumb { position: absolute; inset: 14px 2px 2px; display: grid; }
+.day .dthumb { position: absolute; inset: 17px 2px 2px; display: grid; }
 .day .dthumb img, .day .dthumb .ph { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; background: var(--line); }
 .day .dthumb img.cut { object-fit: contain; background: transparent; }
 .day.planned .dthumb { outline: 1.5px dashed var(--accent); outline-offset: -1px; border-radius: 6px; }
@@ -504,7 +504,6 @@ button.orow { grid-template-columns: 52px 1fr; }
 .favbtn.active { background: var(--card); color: var(--ink); border-color: #d9485f; font-weight: 600; }
 
 /* Wunschliste */
-body[data-tab="wish"] #filterToggle, body[data-tab="wish"] #filters { display: none !important; }
 .buybox { margin: 14px 0 6px; padding: 12px; border: 1px dashed var(--line); border-radius: var(--radius); background: var(--card); }
 .buybox p { margin: 0 0 10px; font-size: 14px; }
 .buybox .primary { width: 100%; padding: 12px; }
@@ -517,3 +516,16 @@ body[data-tab="wish"] #filterToggle, body[data-tab="wish"] #filters { display: n
 .viewchips::-webkit-scrollbar { display: none; }
 .viewchips .vlabel { font-size: 12px; color: var(--muted); flex: 0 0 auto; }
 .viewchips .chipbtn { flex: 0 0 auto; padding: 4px 11px; font-size: 13px; }
+
+/* Planer: immer das ganze Outfitbild (Foto oder Collage) */
+.dthumb .collage, .othumb .collage { aspect-ratio: auto; width: 100%; height: 100%; border-radius: 5px; background: var(--line); }
+.dthumb .collage.cover img, .othumb .collage.cover img { object-fit: contain; }
+.dthumb .collage.look { padding: 1px; gap: 1px; }
+.dthumb .look .lmain, .dthumb .look .lside, .dthumb .look .lrow { gap: 1px; }
+.dthumb .collage.look img.cut { padding: 0; }
+.dthumb .noimg, .othumb .noimg { display: none; }
+.othumb { width: 54px; height: 72px; }
+.orow, button.orow { grid-template-columns: 54px 1fr auto auto; }
+button.orow { grid-template-columns: 54px 1fr; }
+.othumb .collage.look { padding: 2px; gap: 2px; }
+.dthumb .collage img, .othumb .collage img, .day .dthumb .collage img { object-fit: contain; background: transparent; }
