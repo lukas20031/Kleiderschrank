@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.12.2';
+const APP_VERSION = '2.12.3';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -156,7 +156,10 @@ function normalizeSize(raw) {
 }
 async function migrateItems(list) {
   let changed = 0;
+  let newer = false;
   for (const it of list) {
+    // Von einer neueren App-Version gespeichert: nicht anfassen (sonst schaukeln sich zwei Geräte gegenseitig hoch)
+    if ((it.v || 0) > DATA_VERSION) { newer = true; continue; }
     const needCat = it.kategorie && !CAT.l1.has(it.kategorie);
     if (it.v === DATA_VERSION && !needCat) continue;
     const upd = { ...it, _dirty: true, v: DATA_VERSION };
@@ -196,6 +199,7 @@ async function migrateItems(list) {
     for (const k of ['farbe', 'material']) if (!(k in upd)) delete it[k];
     changed++;
   }
+  if (newer) outdatedApp();
   return changed;
 }
 
@@ -1687,7 +1691,7 @@ async function sync() {
     if (await purgeOldTrash()) await loadState();
     await recountPending();
     render();
-    hideBanner();
+    if (!outdatedShown) hideBanner(); // Hinweis auf neuere Version bleibt stehen
     updateSyncIndicator();
   } catch (e) {
     console.error(e);
@@ -3740,6 +3744,14 @@ function toast(msg) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
 }
 let bannerAction = null;
+/** Ein anderes Gerät nutzt schon eine neuere Version: Update suchen und Hinweis zeigen */
+let outdatedShown = false;
+function outdatedApp() {
+  if (outdatedShown) return;
+  outdatedShown = true;
+  swReg?.update().catch(() => {});
+  showBanner('Auf einem anderen Gerät läuft eine neuere Version der App. Tippe hier, um zu aktualisieren.', () => location.reload());
+}
 function showBanner(text, action) {
   const b = $('#banner');
   b.textContent = text;
