@@ -90,3 +90,7 @@ Fotos lassen sich mit „Foto aufnehmen“ direkt mit der Kamera machen oder üb
 - **Export:** *Einstellungen › Als CSV exportieren* erzeugt eine Tabelle für Excel. Wenn ein Filter aktiv ist, enthält sie nur die gefilterten Teile.
 - **Updates der App:** Nach einer Änderung an den Dateien in `sw.js` die `VERSION` erhöhen. Sonst zeigen installierte Geräte noch die alte Version aus dem Cache.
 - **Lokal testen:** `python -m http.server 8080` im Ordner starten und in Dropbox bzw. Entra zusätzlich `http://localhost:8080/` als Redirect-URI eintragen.
+
+## Updates
+
+Nach einem Push sucht die App beim Öffnen bzw. Zurückkehren selbst nach der neuen Version und lädt sie automatisch (ist gerade ein Dialog offen, erscheint stattdessen ein Hinweis zum Antippen). In den Einstellungen zeigt „Nach Update suchen“, ob auf GitHub Pages eine neuere Version liegt, und lädt sie notfalls direkt – deine Daten bleiben dabei erhalten. GitHub Pages braucht nach dem Push meist 1–2 Minuten, bis die neue Version online ist.

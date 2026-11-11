@@ -1,5 +1,5 @@
 // Service Worker: hält die App offline verfügbar. Bei Änderungen an den Dateien VERSION erhöhen.
-const VERSION = 'ks-2.9.4';
+const VERSION = 'ks-2.9.5';
 // Cross-Origin-Isolation: erlaubt dem Browser, beim Freistellen mehrere Prozessorkerne zu nutzen.
 // GitHub Pages kann diese Header nicht selbst senden, daher setzt sie der Service Worker.
 const COI_HEADERS = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' };
@@ -16,7 +16,8 @@ const ASSETS = ['./', './index.html', './kategorien.js', './optionen.js', './app
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' umgeht den Browser-Cache – sonst landen kurz nach einem Push noch alte Dateien im neuen Cache
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -49,7 +50,7 @@ self.addEventListener('fetch', (e) => {
   // Stale-while-revalidate für App-Dateien
   e.respondWith(caches.open(VERSION).then(async (cache) => {
     const cached = await cache.match(req, { ignoreSearch: true });
-    const net = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => cached);
+    const net = fetch(req, { cache: 'no-cache' }).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => cached);
     return cached || net;
   }));
 });

@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.9.4';
+const APP_VERSION = '2.9.5';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -3847,6 +3847,8 @@ async function init() {
   wirePlanner();
   wireWeather();
   wireTrash();
+  registerSW();
+  $('#updateBtn').addEventListener('click', checkForUpdate);
   await DB.open();
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   await loadState();
@@ -3881,8 +3883,49 @@ async function init() {
   updateSyncIndicator();
   sync();
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:' || location.hostname === 'localhost') {
-    navigator.serviceWorker?.register('sw.js').catch((e) => console.warn('SW', e));
+}
+/* ---------------- App-Updates ---------------- */
+let swReg = null;
+async function registerSW() {
+  if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost')) return;
+  try {
+    swReg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+  } catch (e) { console.warn('SW', e); return; }
+  // Neue Version übernommen: neu laden, sobald nichts offen ist (sonst Hinweis)
+  let reloading = false;
+  // Erste Installation übernimmt nur die Kontrolle – erst ein späterer Wechsel ist ein Update
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; }
+    if (reloading) return;
+    const busy = document.querySelector('dialog[open]') || photoTasks.size || syncing;
+    if (busy) return showBanner('Eine neue Version der App ist da. Tippe hier, um sie zu laden.', () => location.reload());
+    reloading = true;
+    location.reload();
+  });
+  // Regelmäßig nachsehen: beim Zurückkehren in die App und stündlich
+  const check = () => swReg?.update().catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+  setInterval(check, 60 * 60 * 1000);
+}
+/** Einstellungen: von Hand nach einer neuen Version suchen */
+async function checkForUpdate() {
+  const out = $('#updateInfo');
+  out.textContent = 'Suche …';
+  try {
+    const txt = await (await fetch(`sw.js?t=${Date.now()}`, { cache: 'no-store' })).text();
+    const server = (txt.match(/VERSION = 'ks-([\d.]+)'/) || [])[1];
+    if (!server) throw new Error('keine Versionsangabe');
+    if (server === APP_VERSION) { out.textContent = `Du hast die neueste Version (${APP_VERSION}).`; return; }
+    out.textContent = `Version ${server} gefunden – wird geladen …`;
+    await swReg?.update();
+    // Falls der Service Worker hängt: Cache der App-Dateien leeren und neu laden (Daten bleiben erhalten)
+    setTimeout(async () => {
+      for (const k of await caches.keys()) if (k.startsWith('ks-') && k !== 'ks-ml-1') await caches.delete(k);
+      location.reload();
+    }, 4000);
+  } catch (e) {
+    out.textContent = `Prüfen nicht möglich (${navigator.onLine ? e.message : 'offline'}).`;
   }
 }
 
