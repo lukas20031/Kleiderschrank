@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.14.0';
+const APP_VERSION = '2.17.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -66,10 +66,16 @@ const fieldText = (it, key) => {
   if (t === 'count') return qty(it) > 1 ? String(qty(it)) : ''; // nur zeigen, wenn mehr als 1
   if (t === 'price') return formatPrice(it[key]);
   if (t === 'date') return formatDate(it[key]);
+  if (key === 'materialien') return materialList(it).map(([m, p]) => p ? `${m} ${p} %` : m).join(', ');
   return fieldValues(it, key).join(', ');
 };
+/** Materialien mit Anteil in Prozent (falls angegeben), größter Anteil zuerst */
+function materialList(it) {
+  const ant = it.materialAnteile || {};
+  return fieldValues(it, 'materialien').map((m, i) => [m, Number(ant[m]) || 0, i]).sort((a, b) => b[1] - a[1] || a[2] - b[2]).map(([m, p]) => [m, p]);
+}
 const swatch = (name) => `<span class="sw" style="background:${FARB_MAP.get(name) || '#ccc'}"></span>`;
-const DATA_VERSION = 5;
+const DATA_VERSION = 7;
 /* Umbau der Shirts (Version 3/4): „T-Shirts“ heißt jetzt „Kurzarmshirts“, Langarm-Shirts haben eine eigene
  * Unterkategorie, Poloshirt ist nach Ärmellänge getrennt, doppelte Arten sind zusammengelegt. */
 const SHIRT_MOVES = {
@@ -81,8 +87,27 @@ const SHIRT_MOVES = {
   'Grafik-Kurzarmshirt': ['Kurzarmshirts', 'Grafik-T-Shirt'],
   'Kurzarmshirt': ['Kurzarmshirts', 'T-Shirt'],
 };
+// 2.17: Schmuck ist eine eigene Kategorie (Ohrschmuck, Ketten, Ringe, Sonstiger Schmuck)
+const SCHMUCK_MOVES = {
+  'Ohrringe': ['Ohrschmuck', ''], 'Ohrmanschetten': ['Ohrschmuck', 'Ohrmanschette'],
+  'Ring': ['Ringe', ''], 'Kette': ['Ketten', 'Kette'], 'Choker': ['Ketten', 'Choker'],
+  'Echtschmuck': ['Sonstiger Schmuck', ''], 'Anderer Schmuck': ['Sonstiger Schmuck', ''],
+};
+/** Alte Einteilung in die aktuelle übersetzen: [kategorie, unterkategorie, typ] oder null (unverändert).
+ *  forFilter: ohne Art bleibt die Unterkategorie offen (ganzer Schmuck statt „Sonstiger Schmuck“). */
+function moveCat(kat, sub, typ, forFilter = false) {
+  if (kat === 'Accessoires' && sub === 'Schmuck') {
+    if (!typ) return ['Schmuck', forFilter ? '' : 'Sonstiger Schmuck', ''];
+    return ['Schmuck', ...(SCHMUCK_MOVES[typ] || ['Sonstiger Schmuck', typ])];
+  }
+  if (kat === 'Oberteile' && sub === 'Hoodies & Sweatshirts' && typ === 'Sweatjacke') return [kat, sub, 'Sweatshirtjacke'];
+  const mv = moveShirt(kat, sub, typ);
+  return mv ? [kat, ...mv] : null;
+}
 /** Alte Unterkategorie/Art aus „T-Shirts“ in die neue Einteilung übersetzen (sonst unverändert) */
 function moveShirt(kat, sub, typ) {
+  // 2.16: Sweatshirtjacke/-weste von „Pullover und Strickjacken“ zu „Hoodies & Sweatshirts“
+  if (kat === 'Oberteile' && sub === 'Pullover und Strickjacken' && (typ === 'Sweatshirtjacke' || typ === 'Sweatshirtweste')) return ['Hoodies & Sweatshirts', typ];
   if (kat === 'Oberteile' && sub === 'Kurzarmshirts' && typ === 'Kurzarmshirt') return ['Kurzarmshirts', 'T-Shirt'];
   if (kat !== 'Oberteile' || sub !== 'T-Shirts') return null;
   return SHIRT_MOVES[typ] || ['Kurzarmshirts', typ || ''];
@@ -191,8 +216,8 @@ async function migrateItems(list) {
       const m = matchOption('zustand', it.zustand);
       if (m) upd.zustand = m; else { alt.zustand = it.zustand; upd.zustand = ''; }
     }
-    const mv = moveShirt(upd.kategorie, upd.unterkategorie, upd.typ);
-    if (mv) [upd.unterkategorie, upd.typ] = mv;
+    const mv = moveCat(upd.kategorie, upd.unterkategorie, upd.typ);
+    if (mv) [upd.kategorie, upd.unterkategorie, upd.typ] = mv;
     if (Object.keys(alt).length) upd.alt = alt; else delete upd.alt;
     await DB.put('items', upd);
     Object.assign(it, upd);
@@ -2092,7 +2117,7 @@ const outfitsWith = (itemId) => outfits.filter((o) => (o.itemIds || []).includes
 const SLOT_OF = {
   'Oberteile': 'top', 'Outdoorbekleidung': 'top', 'Bademode': 'top', 'Ganzkörper': 'full',
   'Unterteile': 'bottom', 'Schuhe': 'shoes',
-  'Taschen': 'side', 'Accessoires': 'side', 'Unterwäsche & Nachtwäsche': 'side',
+  'Taschen': 'side', 'Accessoires': 'side', 'Schmuck': 'side', 'Unterwäsche & Nachtwäsche': 'side',
 };
 const SLOT_RANK = { top: 0, full: 1, bottom: 2, shoes: 3, side: 4 };
 const slotOf = (it) => SLOT_OF[it.kategorie] || 'side';
@@ -2313,7 +2338,9 @@ async function openDetail(id) {
   const link = normalizeUrl(it.link);
   $('#detailLink').hidden = !link;
   if (link) { $('#detailLink').href = link; $('#detailLinkHost').textContent = new URL(link).hostname.replace(/^www\./, ''); }
-  $('#detailFields').innerHTML = rows.map(([k, v, sw]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${esc(v).replace(/\n/g, '<br>')}</dd>`).join('')
+  const artInfo = ART_INFO[it.typ];
+  $('#detailFields').innerHTML = rows.map(([k, v, sw]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${esc(v).replace(/\n/g, '<br>')}${k === 'Kategorie' && artInfo
+    ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was ist ${esc(it.typ)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(artInfo)}</span>` : ''}</dd>`).join('')
     || '<dt>–</dt><dd class="muted">Keine Angaben</dd>';
   const gal = $('#detailPhotos');
   const pids = it.photos || [];
@@ -2363,7 +2390,8 @@ function buildFieldInputs() {
       return `<div class="${cls}">${esc(f.label)}<div class="chips" id="chips-${f.key}"></div>${alt}</div>`;
     }
     const auto = f.key === 'farben' ? '<span class="hint autohint" id="auto-farben" hidden>✨ Automatisch erkannt – tippe zum Ändern</span>' : '';
-    return `<div class="${cls}">${esc(f.label)}<button type="button" class="katbtn pickbtn" data-pick="${f.key}"></button>${auto}${alt}</div>`;
+    const shares = f.key === 'materialien' ? '<div class="anteile" id="anteile" hidden></div>' : '';
+    return `<div class="${cls}">${esc(f.label)}<button type="button" class="katbtn pickbtn" data-pick="${f.key}"></button>${auto}${shares}${alt}</div>`;
   }).join('');
 }
 function fillDatalists() {
@@ -2393,6 +2421,23 @@ function renderPickFields() {
       ? vals.map((v) => `<span class="tag">${f.swatch ? swatch(v) : ''}${esc(v)}</span>`).join('')
       : `${esc(f.label)} wählen`}</span><span aria-hidden="true">›</span>`;
   }
+  renderAnteile();
+}
+/** Editor: Anteile in Prozent je gewähltem Material */
+function renderAnteile() {
+  const box = $('#anteile');
+  const mats = ed.vals.materialien || [];
+  box.hidden = !mats.length;
+  box.innerHTML = mats.map((m) => `<label class="anteil"><span>${esc(m)}</span><span class="unit"><input type="number" inputmode="numeric" min="1" max="100" step="1" data-anteil="${esc(m)}" value="${esc(ed.anteile[m] ?? '')}" placeholder="–"><span>%</span></span></label>`).join('')
+    + '<p class="hint" id="anteilSum"></p>';
+  renderAnteilSum();
+}
+function renderAnteilSum() {
+  const vals = (ed.vals.materialien || []).map((m) => Number(ed.anteile[m]) || 0);
+  const sum = vals.reduce((a, b) => a + b, 0);
+  const el = $('#anteilSum');
+  el.textContent = !sum ? 'Anteile optional, z. B. 90 % Baumwolle, 10 % Polyester' : sum === 100 ? 'Summe 100 %' : `Summe ${sum} % – ergibt nicht 100 %`;
+  el.classList.toggle('warn', !!sum && sum !== 100);
 }
 
 /* ---------------- Auswahldialog für Farbe, Material, Größe ---------------- */
@@ -2507,8 +2552,11 @@ function renderKatList() {
       inner += `<button type="button" class="kl2${open ? ' open' : ''}${chosen ? ' chosen' : ''}" data-g="${i}|${j}" aria-expanded="${open}">
         <span>${esc(u)}${chosen && !open && ed.kat.typ ? `<small>${esc(ed.kat.typ)}</small>` : ''}</span><span class="chev" aria-hidden="true">›</span></button>`;
       if (open) {
-        inner += `<div class="kleaves">${hits.map(([a, n]) =>
-          `<button type="button" class="kleaf${`${k}|${u}|${a}` === cur ? ' active' : ''}" data-k="${i}|${j}|${n}">${esc(a)}</button>`).join('')}</div>`;
+        inner += `<div class="kleaves">${hits.map(([a, n]) => {
+          const key = `${i}|${j}|${n}`, info = ART_INFO[a], shown = info && katInfo === key;
+          return `<div class="kleafrow${`${k}|${u}|${a}` === cur ? ' active' : ''}" data-k="${key}"><button type="button" class="kleaf" data-k="${key}">${esc(a)}</button>${info
+            ? `<button type="button" class="kinfo${shown ? ' on' : ''}" data-info="${key}" aria-label="Was ist ${esc(a)}?" aria-expanded="${!!shown}">?</button>` : ''}${shown ? `<p class="kexpl">${esc(info)}</p>` : ''}</div>`;
+        }).join('')}</div>`;
       }
     });
     if (!any) return;
@@ -2518,8 +2566,10 @@ function renderKatList() {
   });
   $('#katList').innerHTML = html || '<p class="muted">Nichts gefunden.</p>';
 }
+let katInfo = null; // aufgeklappte Erklärung in der Kategorie-Auswahl
 function openKatPicker() {
   $('#katSearch').value = '';
+  katInfo = null;
   // Gewählte Ober- und Unterkategorie gleich aufklappen
   katOpenK = -1; katOpen = null;
   KATEGORIEN.forEach(([k, gs], i) => {
@@ -2528,7 +2578,7 @@ function openKatPicker() {
   });
   renderKatList();
   $('#katDlg').showModal();
-  const act = $('#katList .kleaf.active') || $('#katList .kl2.open') || $('#katList .kl1btn.open');
+  const act = $('#katList .kleafrow.active') || $('#katList .kl2.open') || $('#katList .kl1btn.open');
   if (act) act.scrollIntoView({ block: 'center' });
 }
 
@@ -2552,6 +2602,7 @@ function openEditor(id = null, copyId = null) {
     kat: { kategorie: it?.kategorie || '', unterkategorie: it?.unterkategorie || '', typ: it?.typ || '' },
     vals: Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])),
     alt: { ...(it?.alt || {}) },
+    anteile: { ...(it?.materialAnteile || {}) },
     katAlt: it?.kategorieAlt || '',
   };
   renderKatButton();
@@ -2606,6 +2657,8 @@ async function saveEditor() {
     if (fieldValues(it, f.key).length) delete ed.alt[f.key];
   }
   if (Object.keys(ed.alt).length) it.alt = ed.alt; else delete it.alt;
+  const ant = Object.fromEntries((it.materialien || []).map((m) => [m, Math.round(Number(ed.anteile[m]))]).filter(([, p]) => p > 0 && p <= 100));
+  if (Object.keys(ant).length) it.materialAnteile = ant; else delete it.materialAnteile;
   it.v = DATA_VERSION;
   Object.assign(it, ed.kat);
   if (it.kategorie) delete it.kategorieAlt;
@@ -4040,10 +4093,25 @@ function wireEvents() {
     if (FIELD[optKey].type === 'multi') renderOptions(); else $('#optDlg').close();
   });
   $('#optDlg').addEventListener('close', () => { if (ed) renderPickFields(); });
+  $('#fieldGrid').addEventListener('input', (e) => {
+    const m = e.target.dataset?.anteil;
+    if (m === undefined || !ed) return;
+    const v = e.target.value.trim();
+    if (v === '') delete ed.anteile[m]; else ed.anteile[m] = Math.max(0, Math.min(100, Number(v) || 0));
+    renderAnteilSum();
+  });
 
   // Kategorie-Auswahl
   $('#katBtn').addEventListener('click', openKatPicker);
   $('#katSearch').addEventListener('input', renderKatList);
+  $('#detailFields').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-detailinfo]');
+    if (!b) return;
+    const ex = b.nextElementSibling;
+    ex.hidden = !ex.hidden;
+    b.classList.toggle('on', !ex.hidden);
+    b.setAttribute('aria-expanded', String(!ex.hidden));
+  });
   $('#katList').addEventListener('click', (e) => {
     const kk = e.target.closest('.kl1btn');
     if (kk) {
@@ -4061,7 +4129,15 @@ function wireEvents() {
       $(`#katList .kl2[data-g="${g.dataset.g}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       return;
     }
-    const b = e.target.closest('.kleaf');
+    const info = e.target.closest('.kinfo');
+    if (info) {
+      katInfo = katInfo === info.dataset.info ? null : info.dataset.info;
+      renderKatList();
+      $(`#katList .kinfo[data-info="${info.dataset.info}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (e.target.closest('.kexpl')) return;
+    const b = e.target.closest('.kleafrow');
     if (!b) return;
     const [i, j, n] = b.dataset.k.split('|').map(Number);
     const [k, gs] = KATEGORIEN[i];
@@ -4296,14 +4372,15 @@ function wireEvents() {
 }
 
 /* ---------------- Start ---------------- */
-/** Gespeicherte Filter auf die neue Shirt-Einteilung umstellen */
+/** Gespeicherte Filter auf die neue Kategorie-Einteilung umstellen (Shirts, Sweatshirtjacke/-weste) */
 function migrateSavedFilters() {
   for (const key of ['ks_filters', 'ks_wfilters']) {
     const f = readJson(key, null);
-    if (!f || !['T-Shirts', 'Kurzarmshirts'].includes(f.unterkategorie)) continue;
-    const mv = moveShirt(f.kategorie || 'Oberteile', f.unterkategorie, f.typ);
+    if (!f || !['T-Shirts', 'Kurzarmshirts', 'Pullover und Strickjacken', 'Schmuck', 'Hoodies & Sweatshirts'].includes(f.unterkategorie)) continue;
+    const kat = f.kategorie || (f.unterkategorie === 'Schmuck' ? 'Accessoires' : 'Oberteile');
+    const mv = moveCat(kat, f.unterkategorie, f.typ, true);
     if (!mv) continue;
-    f.unterkategorie = mv[0]; if (f.typ) f.typ = mv[1];
+    f.kategorie = mv[0]; f.unterkategorie = mv[1]; if (f.typ) f.typ = mv[2];
     localStorage.setItem(key, JSON.stringify(f));
     if (key === 'ks_filters') Object.assign(filters, f); else Object.assign(wishFilters, f);
   }

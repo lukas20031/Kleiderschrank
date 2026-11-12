@@ -29,7 +29,7 @@ const MATERIALIEN = [
   'Häkelstrick', 'Kaschmir', 'Keramik', 'Kobalt', 'Kunstfell', 'Kupfer', 'Lackleder', 'Leder', 'Leinen', 'Lycra',
   'Lyocell', 'Mesh', 'Messing', 'Metall', 'Modal', 'Neopren', 'Nylon', 'Pailletten', 'Perle', 'Plastik', 'Polyamid',
   'Polyester', 'Polyurethan', 'Rayon', 'Samt', 'Satin', 'Seide', 'Silber', 'Smaragd', 'Spandex', 'Spitze',
-  'Strick', 'Stroh', 'Synthetik', 'Teddy', 'Tencel', 'Titan', 'Tweed', 'Tüll', 'Veganes Leder', 'Viskose',
+  'Strick', 'Stroh', 'Synthetik', 'Teddy', 'Tencel', 'Titan', 'Tweed', 'Tüll', 'Veganes Leder', 'Vergoldet', 'Versilbert', 'Viskose',
   'Wildleder', 'Wolle', 'Zink',
 ];
 
