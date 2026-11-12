@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.19.1';
+const APP_VERSION = '2.20.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -316,6 +316,8 @@ const provName = () => prov()?.name || 'Cloud';
 
 /* ---------------- Anmeldung (OAuth 2.0 Auth-Code + PKCE) ---------------- */
 class AuthNeeded extends Error { constructor() { super('Anmeldung erforderlich'); } }
+/** Datei wurde inzwischen von einem anderen Gerät geändert (oder existiert schon) */
+class Conflict extends Error { constructor(p) { super(`Konflikt bei ${p}`); } }
 
 const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const randStr = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)));
@@ -439,7 +441,9 @@ async function httpError(r, what) {
 
 /* Beide Speicher bieten dieselben vier Funktionen:
  *   list(ordner)        -> [{ name, etag, meta }]   (nur Dateien; leerer/fehlender Ordner -> [])
- *   put(pfad, blob, typ) -> etag
+ *   put(pfad, blob, typ, erwartet) -> etag
+ *       erwartet: undefined = einfach überschreiben, null = nur neu anlegen, etag = nur überschreiben,
+ *       wenn die Datei noch diesen Stand hat – sonst wird Conflict geworfen (gleichzeitige Änderung)
  *   del(pfad)           (fehlende Datei ist kein Fehler)
  *   download(pfad, meta) -> Blob | null
  */
@@ -461,8 +465,12 @@ const OneDriveStore = {
     }
     return out;
   },
-  async put(p, blob, type) {
-    const r = await authFetch(this.path(p) + ':/content', { method: 'PUT', body: blob, headers: { 'Content-Type': type } });
+  async put(p, blob, type, expect) {
+    const headers = { 'Content-Type': type };
+    if (expect) headers['If-Match'] = expect;
+    const q = expect === null ? '?@microsoft.graph.conflictBehavior=fail' : '';
+    const r = await authFetch(this.path(p) + ':/content' + q, { method: 'PUT', body: blob, headers });
+    if (r.status === 412 || r.status === 409) throw new Conflict(p);
     if (!r.ok) throw await httpError(r, `Hochladen ${p}`);
     return (await r.json()).eTag;
   },
@@ -512,15 +520,17 @@ const DropboxStore = {
       r = await this.rpc('/files/list_folder/continue', { cursor: j.cursor });
     }
   },
-  async put(p, blob) {
+  async put(p, blob, type, expect) {
+    const mode = expect === undefined ? 'overwrite' : expect === null ? 'add' : { '.tag': 'update', update: expect };
     const r = await authFetch(this.content + '/files/upload', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream',
-        'Dropbox-API-Arg': JSON.stringify({ path: '/' + p, mode: 'overwrite', mute: true }),
+        'Dropbox-API-Arg': JSON.stringify({ path: '/' + p, mode, autorename: false, mute: true }),
       },
       body: blob,
     });
+    if (r.status === 409 && (await r.clone().text().catch(() => '')).includes('conflict')) throw new Conflict(p);
     if (!r.ok) throw await httpError(r, `Hochladen ${p}`);
     return (await r.json()).rev;
   },
@@ -528,6 +538,14 @@ const DropboxStore = {
     const r = await this.rpc('/files/delete_v2', { path: '/' + p });
     if (r.ok || await this.notFound(r)) return;
     throw await httpError(r, `Löschen ${p}`);
+  },
+  /** Gelöschte Datei aus dem Dropbox-Verlauf zurückholen (true, wenn geklappt) */
+  async restore(p) {
+    const r = await this.rpc('/files/list_revisions', { path: '/' + p, mode: 'path', limit: 5 });
+    if (!r.ok) return false;
+    const rev = (await r.json()).entries?.[0]?.rev;
+    if (!rev) return false;
+    return (await this.rpc('/files/restore', { path: '/' + p, rev })).ok;
   },
   async download(p) {
     const r = await authFetch(this.content + '/files/download', {
@@ -579,13 +597,26 @@ function thumbUrl(pid) {
   return u;
 }
 
+/** Fotodatei laden; fehlt sie in der Cloud (z. B. durch gleichzeitige Änderungen auf zwei Geräten gelöscht),
+ *  wird einmal versucht, sie aus dem Dropbox-Verlauf wiederherzustellen. */
+const restoreTried = new Set();
+async function downloadPhoto(S, pid, variant) {
+  const blob = await S.download(photoFile(pid, variant));
+  if (blob || !S.restore || restoreTried.has(pid)) return blob;
+  restoreTried.add(pid);
+  let ok = false;
+  for (const v of [false, true, ...(isPng(pid) ? ['orig'] : [])]) ok = (await S.restore(photoFile(pid, v)).catch(() => false)) || ok;
+  if (!ok) return null;
+  console.info('Foto wiederhergestellt:', pid);
+  return S.download(photoFile(pid, variant));
+}
 async function fullUrl(pid) {
   const key = pid + ':f';
   if (urlCache.has(key)) return urlCache.get(key);
   let rec = photoMap.get(pid) || await DB.get('photos', pid);
   if (!rec?.full && Auth.signedIn() && navigator.onLine) {
     try {
-      const blob = await Store().download(photoFile(pid));
+      const blob = await downloadPhoto(Store(), pid, false);
       if (blob) {
         rec = { ...(rec || { id: pid }), full: blob };
         await DB.put('photos', rec);
@@ -1752,12 +1783,8 @@ async function pushChanges() {
   // 1. Fotos zuerst, damit andere Geräte sie finden, sobald das JSON erscheint
   const S = Store();
   for (const ph of await DB.all('photos')) {
-    if (ph.pendingDelete) {
-      await S.del(photoFile(ph.id));
-      await S.del(photoFile(ph.id, true));
-      if (isPng(ph.id)) await S.del(photoFile(ph.id, 'orig'));
-      await DB.del('photos', ph.id);
-    } else if (ph.pendingUpload) {
+    if (ph.pendingDelete) continue; // Löschen erst nach den Teilen (siehe unten)
+    if (ph.pendingUpload) {
       await S.put(photoFile(ph.id), ph.full, photoMime(ph.id));
       await S.put(photoFile(ph.id, true), ph.thumb, photoMime(ph.id));
       if (ph.orig) await S.put(photoFile(ph.id, 'orig'), ph.orig, ph.orig.type || 'image/jpeg');
@@ -1769,16 +1796,40 @@ async function pushChanges() {
   await pushCollection(S, 'items');
   await pushCollection(S, 'outfits');
   await pushCollection(S, 'packlisten');
+  // 3. Fotos löschen – aber nur, wenn kein Teil/Outfit sie (z. B. nach einem Konflikt) doch noch verwendet
+  const used = new Set([...await DB.all('items'), ...await DB.all('outfits')].filter((i) => !i._deleted).flatMap((i) => i.photos || []));
+  for (const ph of await DB.all('photos')) {
+    if (!ph.pendingDelete) continue;
+    if (used.has(ph.id)) { await DB.del('photos', ph.id); dropUrls(ph.id); continue; } // wird noch gebraucht: Vorschau neu laden
+    await S.del(photoFile(ph.id));
+    await S.del(photoFile(ph.id, true));
+    if (isPng(ph.id)) await S.del(photoFile(ph.id, 'orig'));
+    await DB.del('photos', ph.id);
+  }
 }
 async function pushCollection(S, store) {
+  let listing = null; // Cloud-Inhalt, nur bei Konflikten (einmal) geladen
+  const remoteOf = async (id) => {
+    listing ||= new Map((await S.list(store)).map((f) => [f.name, f]));
+    return listing.get(`${id}.json`);
+  };
   for (const it of await DB.all(store)) {
     if (it._deleted) {
       await S.del(`${store}/${it.id}.json`);
       const cur = await DB.get(store, it.id);
       if (cur?._deleted) await DB.del(store, it.id);
     } else if (it._dirty) {
+      const path = `${store}/${it.id}.json`;
       const blob = new Blob([JSON.stringify(itemForUpload(it), null, 2)], { type: 'application/json' });
-      const etag = await S.put(`${store}/${it.id}.json`, blob, 'application/json');
+      let etag;
+      try {
+        // Nur überschreiben, wenn die Cloud-Datei noch den Stand hat, den dieses Gerät zuletzt gesehen hat
+        etag = await S.put(path, blob, 'application/json', it._etag || null);
+      } catch (e) {
+        if (!(e instanceof Conflict)) throw e;
+        etag = await resolveConflict(S, store, it, path, blob, await remoteOf(it.id));
+        if (etag === null) continue; // Cloud-Stand übernommen
+      }
       const cur = await DB.get(store, it.id);
       if (cur && !cur._deleted) {
         cur._etag = etag;
@@ -1789,6 +1840,22 @@ async function pushCollection(S, store) {
   }
 }
 
+/** Gleichzeitig auf zwei Geräten geändert: die neuere Änderung (updatedAt) gewinnt.
+ *  Gibt den neuen etag zurück, wenn der lokale Stand hochgeladen wurde, sonst null (Cloud-Stand übernommen). */
+async function resolveConflict(S, store, it, path, blob, remote) {
+  const rblob = remote && await S.download(path, remote.meta);
+  let data = null;
+  try { data = rblob && JSON.parse(await rblob.text()); } catch { /* defekt: lokal gewinnt */ }
+  if (data && (data.updatedAt || '') >= (it.updatedAt || '')) {
+    console.info('Konflikt – neuere Version aus der Cloud übernommen:', path);
+    const cur = await DB.get(store, it.id);
+    if (cur?.updatedAt === it.updatedAt) await DB.put(store, { ...data, id: it.id, _etag: remote.etag, _dirty: false });
+    else if (cur) await DB.put(store, { ...cur, _etag: remote.etag }); // inzwischen erneut geändert: beim nächsten Mal
+    return null;
+  }
+  console.info('Konflikt – lokale (neuere) Version hochgeladen:', path);
+  return S.put(path, blob, 'application/json', remote ? remote.etag : null);
+}
 async function pullCollection(S, store) {
   const remote = await S.list(store);
   const local = new Map((await DB.all(store)).map((i) => [i.id, i]));
@@ -1828,8 +1895,9 @@ async function pullChanges() {
   const have = new Map((await DB.all('photos')).map((p) => [p.id, p]));
   for (const it of all) {
     for (const pid of it.photos || []) {
-      if (have.has(pid)) continue;
-      const thumb = await S.download(photoFile(pid, true));
+      const h = have.get(pid);
+      if (h && (h.thumb || h.full || h.pendingDelete)) continue;
+      const thumb = await downloadPhoto(S, pid, true);
       if (thumb) await DB.put('photos', { id: pid, itemId: it.id, thumb, full: null });
     }
   }
