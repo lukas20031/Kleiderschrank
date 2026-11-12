@@ -691,3 +691,12 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 .anteil input { width: 72px; text-align: right; }
 .anteile .hint { margin: 2px 0 0; }
 .anteile .hint.warn { color: #c46a00; }
+
+/* „Passt zu“ im Editor */
+.matchlist { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.matchlist:empty { display: none; }
+.matchchip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 4px 3px 3px; font-size: 14px; max-width: 100%; }
+.matchchip img, .matchchip .ph { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex: 0 0 28px; display: grid; place-items: center; background: var(--line); }
+.matchchip img.cut { object-fit: contain; background: #fff; }
+.matchchip > span:not(.ph) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.matchchip button { border: 0; background: none; color: var(--muted); padding: 2px 6px; font-size: 14px; }

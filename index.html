@@ -114,7 +114,6 @@
           <span>Aus Galerie</span>
         </label>
       </div>
-      <p class="hint">Erstes Foto = Titelbild. Tippe ein Foto an, um es zu drehen, zuzuschneiden, mit Tags wie „Vorne“ oder „Selfie“ zu versehen, zum Titelbild zu machen oder zu löschen.</p>
 
       <label class="field">Bezeichnung (optional)
         <input name="bezeichnung" placeholder="optional – sonst wird die Kategorie angezeigt" autocomplete="off">
@@ -135,6 +134,11 @@
 
       <div class="field">Jahreszeit
         <div id="seasonChips" class="chips"></div>
+      </div>
+
+      <div class="field">Passt zu
+        <div id="matchList" class="matchlist"></div>
+        <div class="row"><button type="button" id="matchAdd" class="chipbtn">+ Teile auswählen</button></div>
       </div>
 
       <label class="field">Notiz
@@ -274,6 +278,10 @@
       <span class="hint">Alle Angaben und Fotos bleiben erhalten; ein leeres Kaufdatum wird auf heute gesetzt.</span>
     </div>
     <div id="detailWear" class="wearbox"></div>
+    <div id="detailMatchBox" hidden>
+      <h3>Passt zu:</h3>
+      <div id="detailMatch" class="olinks"></div>
+    </div>
     <div id="detailOutfitsBox" hidden>
       <h3>In Outfits</h3>
       <div id="detailOutfits" class="olinks"></div>
@@ -478,7 +486,9 @@
     <div class="row wrap">
       <button type="button" id="csvBtn" class="chipbtn">Als CSV exportieren</button>
       <button type="button" id="trashBtn" class="chipbtn">Papierkorb</button>
+      <button type="button" id="cleanupBtn" class="chipbtn">Unbenutzte Fotos löschen</button>
     </div>
+    <p class="hint" id="cleanupInfo"></p>
     <p class="hint" id="whereHint"></p>
     <p class="hint" id="version"></p>
     <div class="row wrap"><button type="button" id="updateBtn" class="chipbtn">Nach Update suchen</button></div>

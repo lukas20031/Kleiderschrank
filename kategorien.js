@@ -60,7 +60,7 @@ const KATEGORIEN = [
       'Lobe-Piercing', 'Upper-Lobe-Piercing', 'Helix-Piercing', 'Forward-Helix-Piercing', 'Flat-Piercing', 'Industrial-Piercing', 'Rook-Piercing',
       'Daith-Piercing', 'Tragus-Piercing', 'Anti-Tragus-Piercing', 'Conch-Piercing', 'Snug-Piercing', 'Orbital-Piercing']],
     ['Ketten', ['Anhänger', 'Plattenkette', 'Singapurkette', 'Ankerkette', 'Erbskette', 'Schlangenkette', 'Kugelkette', 'Zopfkette', 'Fuchsschwanzkette',
-      'Kordelkette', 'Venezianerkette', 'Panzerkette', 'Figarokette', 'Königskette', 'Tenniskette', 'Choker', 'Fußkettchen', 'Körperkette']],
+      'Kordelkette', 'Venezianerkette', 'Panzerkette', 'Figarokette', 'Königskette', 'Tenniskette', 'Lederkette', 'Choker', 'Fußkettchen', 'Körperkette']],
     ['Ringe', ['Bandring', 'Solitär-Ring', 'Halo-Ring', 'Eternity-Ring', 'Memoire-Ring', 'Spannring', 'Siegelring', 'Cocktail-Ring', 'Statement-Ring',
       'Kugelring', 'Kettenring', 'Puzzle-Ring', 'Vorsteckring', 'Verlobungsring', 'Trauring', 'Partnerring', 'Freundschaftsring', 'Promise-Ring', 'Purity-Ring', 'Taufring']],
     ['Uhren', ['Dresswatch', 'Chronograph', 'Taucheruhr', 'Fliegeruhr', 'GMT-Uhr', 'Smartwatch']],
@@ -258,6 +258,7 @@ const ART_INFO = {
   'Figarokette': 'Flache Panzerkette, bei der mehrere kurze Glieder sich mit einem langen abwechseln.',
   'Königskette': 'Kräftige, kantige Kette aus mehrfach ineinander verschlungenen Ankergliedern.',
   'Tenniskette': 'Durchgehende Reihe einzeln gefasster Steine, beweglich miteinander verbunden.',
+  'Lederkette': 'Band oder Kordel aus Leder statt Metallgliedern, oft mit Anhänger.',
   'Anhänger': 'Schmuckstück, das an einer Kette hängt (z. B. Medaillon, Kreuz oder Buchstabe).',
   // Schmuck – Uhren
   'Chronograph': 'Uhr mit zusätzlicher Stoppfunktion, oft an kleinen Hilfszifferblättern und Drückern am Gehäuserand erkennbar.',

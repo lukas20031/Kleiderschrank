@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.20.0';
+const APP_VERSION = '2.21.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2376,8 +2376,9 @@ async function purgeOutfit(id) {
 /* Teile-Auswahl für ein Outfit: gleiche Suche und Filter wie in der Übersicht */
 const pick = { filters: {}, selected: new Set(), onDone: null };
 /** Teile auswählen; onDone erhält die bisherige Reihenfolge plus neu Ausgewählte hinten */
-function openItemPicker(ids = oed.itemIds, onDone = (next) => { oed.itemIds = next; renderOutfitItems(); }) {
+function openItemPicker(ids = oed.itemIds, onDone = (next) => { oed.itemIds = next; renderOutfitItems(); }, exclude = null) {
   pick.filters = {};
+  pick.exclude = exclude;
   pick.selected = new Set(ids);
   pick.base = [...ids];
   pick.onDone = onDone;
@@ -2391,10 +2392,40 @@ function renderPicker() {
   const n = Object.entries(pick.filters).filter(([, v]) => v).length;
   $('#pickFilterCount').textContent = n ? `(${n})` : '';
   $('#pickFilterToggle').classList.toggle('active', n > 0);
-  const list = filterItems($('#pickSearch').value, pick.filters, 'kategorie');
+  const list = filterItems($('#pickSearch').value, pick.filters, 'kategorie').filter((it) => it.id !== pick.exclude);
   $('#pickGrid').innerHTML = list.map((it) => itemCardHtml(it, { selected: pick.selected.has(it.id) })).join('')
     || '<p class="muted">Keine passenden Teile.</p>';
   $('#pickDone').textContent = `Fertig (${pick.selected.size})`;
+}
+
+/* ---------------- „Passt zu“: Verweise zwischen Teilen ----------------
+ * Gespeichert wird der Verweis nur bei einem der beiden Teile (passtZu: [ids]); angezeigt wird er bei beiden. */
+function matchesOf(id) {
+  const it = findItem(id);
+  const ids = [...(it?.passtZu || []), ...[...items, ...wishes].filter((o) => (o.passtZu || []).includes(id)).map((o) => o.id)];
+  return [...new Set(ids)].filter((x) => x !== id && findItem(x));
+}
+function renderMatchList() {
+  $('#matchList').innerHTML = ed.passt.map((id) => {
+    const o = findItem(id);
+    return o ? `<span class="matchchip">${photoCell(o)}<span>${esc(itemTitle(o))}</span><button type="button" data-unmatch="${esc(id)}" aria-label="Verweis entfernen">✕</button></span>` : '';
+  }).join('');
+}
+/** Beim Speichern: Verweise, die nur beim anderen Teil standen und entfernt wurden, dort löschen */
+async function saveMatches(it, before) {
+  const keep = new Set(ed.passt);
+  const now = new Date().toISOString();
+  for (const id of before) {
+    if (keep.has(id)) continue;
+    const o = await DB.get('items', id);
+    if (o && (o.passtZu || []).includes(it.id)) {
+      const pz = o.passtZu.filter((x) => x !== it.id);
+      await DB.put('items', { ...o, passtZu: pz, updatedAt: now, _dirty: true });
+    }
+  }
+  // Selbst nur speichern, was nicht schon beim anderen Teil steht
+  const own = ed.passt.filter((id) => !(findItem(id)?.passtZu || []).includes(it.id));
+  if (own.length) it.passtZu = own; else delete it.passtZu;
 }
 
 /* ---------------- Detailansicht ---------------- */
@@ -2428,6 +2459,10 @@ async function openDetail(id) {
   const wish = !!it.wunsch;
   $('#detailWear').hidden = wish;
   $('#detailBuyBox').hidden = !wish;
+  // Passt zu (beide Richtungen)
+  const mt = matchesOf(id).map(findItem);
+  $('#detailMatchBox').hidden = !mt.length;
+  $('#detailMatch').innerHTML = mt.map((o) => `<button type="button" class="ochiplink" data-item="${esc(o.id)}"><div class="collage cover">${photoCell(o)}</div><span>${esc(itemTitle(o))}</span></button>`).join('');
   // In welchen Outfits kommt das Teil vor?
   const ofs = wish ? [] : outfitsWith(id);
   $('#detailOutfitsBox').hidden = !ofs.length;
@@ -2504,7 +2539,7 @@ function renderPickFields() {
 function renderAnteile() {
   const box = $('#anteile');
   const mats = ed.vals.materialien || [];
-  box.hidden = !mats.length;
+  box.hidden = mats.length < 2; // Anteile erst ab zwei Materialien
   box.innerHTML = mats.map((m) => `<label class="anteil"><span>${esc(m)}</span><span class="unit"><input type="number" inputmode="numeric" min="1" max="100" step="1" data-anteil="${esc(m)}" value="${esc(ed.anteile[m] ?? '')}" placeholder="–"><span>%</span></span></label>`).join('')
     + '<p class="hint" id="anteilSum"></p>';
   renderAnteilSum();
@@ -2513,7 +2548,7 @@ function renderAnteilSum() {
   const vals = (ed.vals.materialien || []).map((m) => Number(ed.anteile[m]) || 0);
   const sum = vals.reduce((a, b) => a + b, 0);
   const el = $('#anteilSum');
-  el.textContent = !sum ? 'Anteile optional, z. B. 90 % Baumwolle, 10 % Polyester' : sum === 100 ? 'Summe 100 %' : `Summe ${sum} % – ergibt nicht 100 %`;
+  el.textContent = !sum ? '' : sum === 100 ? 'Summe 100 %' : `Summe ${sum} % – ergibt nicht 100 %`;
   el.classList.toggle('warn', !!sum && sum !== 100);
 }
 
@@ -2680,6 +2715,8 @@ function openEditor(id = null, copyId = null) {
     vals: Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])),
     alt: { ...(it?.alt || {}) },
     anteile: { ...(it?.materialAnteile || {}) },
+    passt: orig ? matchesOf(orig.id) : [...(it?.passtZu || [])],
+    passtBefore: orig ? matchesOf(orig.id) : [],
     katAlt: it?.kategorieAlt || '',
   };
   renderKatButton();
@@ -2700,6 +2737,7 @@ function openEditor(id = null, copyId = null) {
     ? `Angelegt ${new Date(it.createdAt).toLocaleString('de-DE')} · geändert ${new Date(it.updatedAt).toLocaleString('de-DE')}`
     : '';
   renderAnlass();
+  renderMatchList();
   renderPickFields();
   renderPhotoStrip();
   $('#editor').showModal();
@@ -2734,7 +2772,8 @@ async function saveEditor() {
     if (fieldValues(it, f.key).length) delete ed.alt[f.key];
   }
   if (Object.keys(ed.alt).length) it.alt = ed.alt; else delete it.alt;
-  const ant = Object.fromEntries((it.materialien || []).map((m) => [m, Math.round(Number(ed.anteile[m]))]).filter(([, p]) => p > 0 && p <= 100));
+  await saveMatches(it, ed.passtBefore);
+  const ant = (it.materialien || []).length < 2 ? {} : Object.fromEntries((it.materialien || []).map((m) => [m, Math.round(Number(ed.anteile[m]))]).filter(([, p]) => p > 0 && p <= 100));
   if (Object.keys(ant).length) it.materialAnteile = ant; else delete it.materialAnteile;
   it.v = DATA_VERSION;
   Object.assign(it, ed.kat);
@@ -3966,6 +4005,18 @@ function wireEvents() {
   });
 
   // Outfits: Detail, Editor, Teile-Auswahl
+  $('#detailMatch').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-item]');
+    if (b) openDetail(b.dataset.item);
+  });
+  $('#matchAdd').addEventListener('click', () => openItemPicker(ed.passt, (next) => { ed.passt = next; renderMatchList(); }, ed.id));
+  $('#matchList').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unmatch]');
+    if (!b) return;
+    ed.passt = ed.passt.filter((x) => x !== b.dataset.unmatch);
+    renderMatchList();
+  });
+  $('#cleanupBtn').addEventListener('click', cleanupPhotos);
   $('#detailOutfits').addEventListener('click', (e) => {
     const b = e.target.closest('[data-outfit]');
     if (b) openOutfitDetail(b.dataset.outfit);
@@ -4564,6 +4615,57 @@ async function staleCheck() {
     sessionStorage.setItem('ks_reloaded_for', target);
     reloadForUpdate();
   } catch { /* egal */ }
+}
+/** Einstellungen: Fotodateien löschen, die kein Teil, Wunsch, Outfit oder Papierkorb-Eintrag mehr verwendet.
+ *  Sicherheitsnetze: vorher synchronisieren, nur ohne offene Änderungen, nur wenn alle Cloud-Einträge lokal bekannt sind,
+ *  und nur Dateien, die älter als ein Tag sind (ein anderes Gerät lädt Fotos vor dem zugehörigen Teil hoch). */
+const fileBase = (name) => name.replace(/\.[a-z0-9]+$/i, '').replace(/_[to]$/, '');
+async function cleanupPhotos() {
+  const out = $('#cleanupInfo');
+  const btn = $('#cleanupBtn');
+  btn.disabled = true;
+  try {
+    const used = async () => {
+      const recs = [...await DB.all('items'), ...await DB.all('outfits')].filter((i) => !i._deleted);
+      const set = new Set(recs.flatMap((i) => i.photos || []).map((pid) => fileBase(pid)));
+      for (const p of await DB.all('photos')) if (p.pendingUpload) set.add(fileBase(p.id));
+      return set;
+    };
+    // Lokale Kopien ohne Verwendung
+    let local = 0;
+    const ref = await used();
+    for (const p of await DB.all('photos')) {
+      if (!ref.has(fileBase(p.id)) && !p.pendingUpload && !p.pendingDelete) { await DB.del('photos', p.id); dropUrls(p.id); local++; }
+    }
+    if (!Auth.signedIn() || !navigator.onLine) {
+      out.textContent = `${local} lokale Fotos entfernt.${Auth.signedIn() ? ' Für die Cloud bitte online gehen.' : ''}`;
+      return;
+    }
+    out.textContent = 'Synchronisiere …';
+    while (syncing) await sleep(300);
+    await sync();
+    await recountPending();
+    if (countPending()) { out.textContent = 'Es gibt noch nicht hochgeladene Änderungen – bitte erst synchronisieren.'; return; }
+    out.textContent = 'Prüfe Cloud …';
+    const S = Store();
+    for (const store of ['items', 'outfits']) {
+      const localIds = new Set((await DB.all(store)).map((i) => i.id));
+      const missing = (await S.list(store)).filter((f) => f.name.endsWith('.json') && !localIds.has(f.name.slice(0, -5)));
+      if (missing.length) { out.textContent = 'Nicht alle Einträge aus der Cloud sind auf diesem Gerät – bitte erneut synchronisieren.'; return; }
+    }
+    const keep = await used();
+    const dayAgo = Date.now() - 24 * 3600 * 1000;
+    const when = (m) => Date.parse(m?.server_modified || m?.lastModifiedDateTime || m?.client_modified || '') || 0;
+    const files = (await S.list('fotos')).filter((f) => !keep.has(fileBase(f.name)) && when(f.meta) < dayAgo);
+    if (!files.length) { out.textContent = `Keine unbenutzten Fotos in der Cloud${local ? ` (${local} lokale entfernt)` : ''}.`; return; }
+    const mb = files.reduce((a, f) => a + (f.meta?.size || 0), 0) / 1048576;
+    if (!confirm(`${files.length} Fotodateien (${mb.toFixed(1)} MB) werden von keinem Teil, Wunsch, Outfit und keinem Eintrag im Papierkorb verwendet.\n\nEndgültig aus der Cloud löschen?`)) { out.textContent = ''; return; }
+    let n = 0;
+    for (const f of files) { await S.del(`fotos/${f.name}`); out.textContent = `Lösche … ${++n}/${files.length}`; }
+    out.textContent = `${files.length} unbenutzte Fotodateien (${mb.toFixed(1)} MB) gelöscht.`;
+  } catch (e) {
+    out.textContent = 'Aufräumen fehlgeschlagen: ' + e.message;
+  } finally { btn.disabled = false; }
 }
 /** Einstellungen: von Hand nach einer neuen Version suchen */
 async function checkForUpdate() {
