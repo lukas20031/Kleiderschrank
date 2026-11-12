@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.17.0';
+const APP_VERSION = '2.18.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -75,7 +75,7 @@ function materialList(it) {
   return fieldValues(it, 'materialien').map((m, i) => [m, Number(ant[m]) || 0, i]).sort((a, b) => b[1] - a[1] || a[2] - b[2]).map(([m, p]) => [m, p]);
 }
 const swatch = (name) => `<span class="sw" style="background:${FARB_MAP.get(name) || '#ccc'}"></span>`;
-const DATA_VERSION = 7;
+const DATA_VERSION = 8;
 /* Umbau der Shirts (Version 3/4): „T-Shirts“ heißt jetzt „Kurzarmshirts“, Langarm-Shirts haben eine eigene
  * Unterkategorie, Poloshirt ist nach Ärmellänge getrennt, doppelte Arten sind zusammengelegt. */
 const SHIRT_MOVES = {
@@ -90,8 +90,11 @@ const SHIRT_MOVES = {
 // 2.17: Schmuck ist eine eigene Kategorie (Ohrschmuck, Ketten, Ringe, Sonstiger Schmuck)
 const SCHMUCK_MOVES = {
   'Ohrringe': ['Ohrschmuck', ''], 'Ohrmanschetten': ['Ohrschmuck', 'Ohrmanschette'],
-  'Ring': ['Ringe', ''], 'Kette': ['Ketten', 'Kette'], 'Choker': ['Ketten', 'Choker'],
+  'Ring': ['Ringe', ''], 'Kette': ['Ketten', ''], 'Choker': ['Ketten', 'Choker'],
   'Echtschmuck': ['Sonstiger Schmuck', ''], 'Anderer Schmuck': ['Sonstiger Schmuck', ''],
+  // 2.18: Fußkettchen/Körperkette zu Ketten, Uhren und Piercings eigene Unterkategorien
+  'Fußkettchen': ['Ketten', 'Fußkettchen'], 'Körperkette': ['Ketten', 'Körperkette'],
+  'Uhr': ['Uhren', ''], 'Körperschmuck': ['Piercings', ''],
 };
 /** Alte Einteilung in die aktuelle übersetzen: [kategorie, unterkategorie, typ] oder null (unverändert).
  *  forFilter: ohne Art bleibt die Unterkategorie offen (ganzer Schmuck statt „Sonstiger Schmuck“). */
@@ -99,6 +102,10 @@ function moveCat(kat, sub, typ, forFilter = false) {
   if (kat === 'Accessoires' && sub === 'Schmuck') {
     if (!typ) return ['Schmuck', forFilter ? '' : 'Sonstiger Schmuck', ''];
     return ['Schmuck', ...(SCHMUCK_MOVES[typ] || ['Sonstiger Schmuck', typ])];
+  }
+  if (kat === 'Schmuck' && (sub === 'Sonstiger Schmuck' || sub === 'Ketten') && SCHMUCK_MOVES[typ]) {
+    const mv = SCHMUCK_MOVES[typ];
+    return mv[0] === sub && mv[1] === typ ? null : ['Schmuck', ...mv];
   }
   if (kat === 'Oberteile' && sub === 'Hoodies & Sweatshirts' && typ === 'Sweatjacke') return [kat, sub, 'Sweatshirtjacke'];
   const mv = moveShirt(kat, sub, typ);
@@ -4376,8 +4383,8 @@ function wireEvents() {
 function migrateSavedFilters() {
   for (const key of ['ks_filters', 'ks_wfilters']) {
     const f = readJson(key, null);
-    if (!f || !['T-Shirts', 'Kurzarmshirts', 'Pullover und Strickjacken', 'Schmuck', 'Hoodies & Sweatshirts'].includes(f.unterkategorie)) continue;
-    const kat = f.kategorie || (f.unterkategorie === 'Schmuck' ? 'Accessoires' : 'Oberteile');
+    if (!f || !['T-Shirts', 'Kurzarmshirts', 'Pullover und Strickjacken', 'Schmuck', 'Hoodies & Sweatshirts', 'Sonstiger Schmuck', 'Ketten'].includes(f.unterkategorie)) continue;
+    const kat = f.kategorie || (f.unterkategorie === 'Schmuck' ? 'Accessoires' : ['Sonstiger Schmuck', 'Ketten'].includes(f.unterkategorie) ? 'Schmuck' : 'Oberteile');
     const mv = moveCat(kat, f.unterkategorie, f.typ, true);
     if (!mv) continue;
     f.kategorie = mv[0]; f.unterkategorie = mv[1]; if (f.typ) f.typ = mv[2];
