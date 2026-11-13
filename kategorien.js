@@ -6,7 +6,7 @@ const KATEGORIEN = [
     ['Kurzarmshirts', ['T-Shirt', 'T-Shirt mit V-Ausschnitt', 'Grafik-T-Shirt', 'Poloshirt kurzärmlig', 'Dreiviertelarm-Shirt']],
     ['Langarmshirts', ['Langarmshirt', 'Langarmshirt mit V-Ausschnitt', 'Grafik-Langarmshirt', 'Poloshirt langärmlig']],
     ['Top', ['Weste', 'Unterhemd', 'Croptop', 'Bustier', 'Crop-Weste', 'Schößchen-Top', 'Korsett-Top', 'Neckholder-Top', 'Bandeau-Top', 'Tanktop']],
-    ['Pullover und Strickjacken', ['Pullover', 'Pullover mit Zopfmuster', 'Stehkragen', 'Rollkragen', 'Strickjacke', 'Shrug', 'Bolero']],
+    ['Pullover und Strickjacken', ['Pullover', 'Pullover mit V-Ausschnitt', 'Pullover mit Zopfmuster', 'Stehkragen', 'Rollkragen', 'Strickjacke', 'Shrug', 'Bolero']],
     ['Hoodies & Sweatshirts', ['Sweatshirt', 'Hoodie', 'Sweatshirtjacke', 'Sweatshirtweste', 'Fleece']],
     ['Sportbekleidung', ['Trainingsjacke', 'Sport-BH', 'Trikot', 'Sportoberteil', 'Yoga-Oberteil']],
     ['Andere Oberteile', ['Anderes Oberteil']],

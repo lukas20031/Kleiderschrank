@@ -700,3 +700,19 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 .matchchip img.cut { object-fit: contain; background: #fff; }
 .matchchip > span:not(.ph) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .matchchip button { border: 0; background: none; color: var(--muted); padding: 2px 6px; font-size: 14px; }
+
+/* Waschhinweise */
+.careicon { width: 22px; height: 24px; flex: 0 0 22px; }
+.ochips.icons .ochip { padding-left: 8px; }
+.ochips.icons .ochip .careicon { width: 30px; height: 32px; flex-basis: 30px; }
+.ogroup { margin: 14px 2px 8px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.ogroup:first-child { margin-top: 2px; }
+.tag.icontag { display: inline-flex; align-items: center; gap: 4px; }
+.tag.icontag .careicon { width: 22px; height: 24px; flex-basis: 22px; }
+.carelist { display: flex; flex-direction: column; gap: 4px; }
+.carelist > span { display: inline-flex; align-items: center; gap: 8px; }
+.carelist .careicon { width: 28px; height: 30px; flex-basis: 28px; }
+
+/* Eigene Einträge verwalten */
+.vrow { grid-template-columns: 1fr auto auto; }
+.addval { margin-top: 12px; }

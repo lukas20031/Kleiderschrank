@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.21.0';
+const APP_VERSION = '2.23.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -17,16 +17,18 @@ const APP_VERSION = '2.21.0';
 const FARB_MAP = new Map(FARBEN);
 const FIELDS = [
   { key: 'farben', label: 'Farbe', type: 'multi', options: FARBEN.map((f) => f[0]), swatch: true, wide: true },
-  { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true },
+  { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true, custom: true },
   { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
   { key: 'passform', label: 'Passform', type: 'chips', options: ['Zu klein', 'Eng', 'Passend', 'Locker', 'Zu groß'], wide: true },
   { key: 'anzahl', label: 'Anzahl', type: 'count', wide: true, noFilter: true },
   { key: 'marke', label: 'Marke', type: 'text', defaults: [], wide: true },
+  { key: 'herkunft', label: 'Herkunftsland', type: 'text', wide: true, defaults: LAENDER },
   { key: 'preis', label: 'Preis', type: 'price', wide: true, noFilter: true },
   { key: 'kaufdatum', label: 'Kaufdatum', type: 'date', wide: true, noFilter: true },
   { key: 'link', label: 'Link zum Produkt', type: 'url', wide: true, noFilter: true },
   { key: 'lagerort', label: 'Lagerort', type: 'text', defaults: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'], wide: true },
   { key: 'zustand', label: 'Zustand', type: 'chips', options: ZUSTAENDE, wide: true },
+  { key: 'pflege', label: 'Waschhinweise', type: 'multi', groups: PFLEGE, flatGroups: true, icon: true, wide: true, noFilter: true, slot: 2 },
 ];
 const FIELD = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
 for (const f of FIELDS) {
@@ -171,7 +173,7 @@ function mapOldCategory(old) {
 // Ältere freie Werte (Farbe, Material, Größe, Zustand) auf die festen Listen abbilden
 const VAL_ALIASES = {
   farben: { bunt: 'Mehrfarbig', gemustert: 'Mehrfarbig', lila: 'Violett', creme: 'Ecru', navy: 'Dunkelblau', weiss: 'Weiß', petrol: 'Türkis', silbern: 'Silber', golden: 'Gold' },
-  materialien: { merinowolle: 'Wolle', merino: 'Wolle', elasthan: 'Elastan', 'elasthan-mix': 'Elastan', jeans: 'Denim', wildleder: 'Wildleder', kunstleder: 'Veganes Leder' },
+  materialien: { merinowolle: 'Wolle', merino: 'Wolle', elastan: 'Elasthan', 'elasthan-mix': 'Elasthan', acryl: 'Polyacryl (Acryl)', polyacryl: 'Polyacryl (Acryl)', jeans: 'Denim', wildleder: 'Wildleder', kunstleder: 'Veganes Leder' },
   zustand: { 'neu mit etikett': 'Neu mit Etikett', 'wie neu': 'Wie neu' },
 };
 function matchOption(key, raw) {
@@ -188,6 +190,22 @@ function normalizeSize(raw) {
   if (/^EINHEITSGR(Ö|OE)SSE$|^ONESIZE$/.test(v)) v = 'Einheitsgröße';
   return FIELD.groesse.order.has(v) ? v : null;
 }
+// Umbenannte Materialien: 2.22 „Elasthan“, 2.23 „Polyacryl (Acryl)“
+const MAT_RENAME = { Elastan: 'Elasthan', Acryl: 'Polyacryl (Acryl)', Polyacryl: 'Polyacryl (Acryl)' };
+/** Wert in einem Listenfeld umbenennen (to = '' löscht ihn); bei Materialien auch den Prozentanteil mitnehmen.
+ *  Gibt die geänderten Felder zurück oder null, wenn der Wert nicht vorkommt. */
+function renamedMulti(rec, key, from, to) {
+  const arr = rec[key];
+  if (!Array.isArray(arr) || !arr.includes(from)) return null;
+  const out = { [key]: [...new Set(arr.map((v) => (v === from ? to : v)).filter(Boolean))] };
+  if (key === 'materialien' && rec.materialAnteile && from in rec.materialAnteile) {
+    const ant = { ...rec.materialAnteile };
+    if (to) ant[to] = (Number(ant[to]) || 0) + (Number(ant[from]) || 0);
+    delete ant[from];
+    out.materialAnteile = ant;
+  }
+  return out;
+}
 async function migrateItems(list) {
   let changed = 0;
   let newer = false;
@@ -195,7 +213,8 @@ async function migrateItems(list) {
     // Von einer neueren App-Version gespeichert: nicht anfassen (sonst schaukeln sich zwei Geräte gegenseitig hoch)
     if ((it.v || 0) > DATA_VERSION) { newer = true; continue; }
     const needCat = it.kategorie && !CAT.l1.has(it.kategorie);
-    if (it.v === DATA_VERSION && !needCat) continue;
+    const needMat = (it.materialien || []).some((m) => MAT_RENAME[m]); // umbenannte Materialien
+    if (it.v === DATA_VERSION && !needCat && !needMat) continue;
     const upd = { ...it, _dirty: true, v: DATA_VERSION };
     const alt = { ...(it.alt || {}) };
     if (needCat) {
@@ -227,6 +246,7 @@ async function migrateItems(list) {
     }
     const mv = moveCat(upd.kategorie, upd.unterkategorie, upd.typ);
     if (mv) [upd.kategorie, upd.unterkategorie, upd.typ] = mv;
+    if (needMat) for (const [from, to] of Object.entries(MAT_RENAME)) Object.assign(upd, renamedMulti(upd, 'materialien', from, to));
     if (Object.keys(alt).length) upd.alt = alt; else delete upd.alt;
     await DB.put('items', upd);
     Object.assign(it, upd);
@@ -2134,6 +2154,7 @@ function render() {
   }
   renderSortOptions();
   renderViewChips();
+  $('#emptyWish').hidden = true;
   if (tab === 'outfits') return renderOutfits();
   if (tab === 'wish') return renderWishes();
   $('#emptyWish').hidden = true;
@@ -2440,14 +2461,15 @@ async function openDetail(id) {
     ['Status', it.status || ''],
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
     ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, f.key === 'preis' && qty(it) > 1 && hasValue(it.preis)
-      ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null]),
+      ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null,
+      f.icon ? `<span class="carelist">${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}${esc(v)}</span>`).join('')}</span>` : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
   const link = normalizeUrl(it.link);
   $('#detailLink').hidden = !link;
   if (link) { $('#detailLink').href = link; $('#detailLinkHost').textContent = new URL(link).hostname.replace(/^www\./, ''); }
   const artInfo = ART_INFO[it.typ];
-  $('#detailFields').innerHTML = rows.map(([k, v, sw]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${esc(v).replace(/\n/g, '<br>')}${k === 'Kategorie' && artInfo
+  $('#detailFields').innerHTML = rows.map(([k, v, sw, html]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${html || esc(v).replace(/\n/g, '<br>')}${k === 'Kategorie' && artInfo
     ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was ist ${esc(it.typ)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(artInfo)}</span>` : ''}</dd>`).join('')
     || '<dt>–</dt><dd class="muted">Keine Angaben</dd>';
   const gal = $('#detailPhotos');
@@ -2480,7 +2502,7 @@ async function openDetail(id) {
 let ed = null; // { id, isNew, photos: [{id, isNew, full, thumb}], removed: [] , anlass: Set }
 
 function buildFieldInputs() {
-  $('#fieldGrid').innerHTML = FIELDS.map((f) => {
+  const html = FIELDS.map((f) => {
     const cls = `field${f.wide ? ' wide' : ''}" data-field="${f.key}`;
     const alt = `<span class="hint legacy" id="alt-${f.key}" hidden></span>`;
     if (f.type === 'text') {
@@ -2504,8 +2526,12 @@ function buildFieldInputs() {
     const auto = f.key === 'farben' ? '<span class="hint autohint" id="auto-farben" hidden>✨ Automatisch erkannt – tippe zum Ändern</span>' : '';
     const shares = f.key === 'materialien' ? '<div class="anteile" id="anteile" hidden></div>' : '';
     return `<div class="${cls}">${esc(f.label)}<button type="button" class="katbtn pickbtn" data-pick="${f.key}"></button>${auto}${shares}${alt}</div>`;
-  }).join('');
+  });
+  $('#fieldGrid').innerHTML = html.filter((_, i) => !FIELDS[i].slot).join('');
+  $('#fieldGrid2').innerHTML = html.filter((_, i) => FIELDS[i].slot === 2).join('');
 }
+const careIcon = (v) => PFLEGE_ICON[v] || '';
+function onFields(type, fn) { for (const el of document.querySelectorAll('#fieldGrid, #fieldGrid2')) el.addEventListener(type, fn); }
 function fillDatalists() {
   for (const f of FIELDS.filter((x) => x.type === 'text')) {
     const vals = new Set([...valuesFor(f.key).keys(), ...f.defaults]);
@@ -2530,7 +2556,7 @@ function renderPickFields() {
     const btn = $(`[data-pick="${f.key}"]`);
     btn.classList.toggle('empty', !vals.length);
     btn.innerHTML = `<span class="picked">${vals.length
-      ? vals.map((v) => `<span class="tag">${f.swatch ? swatch(v) : ''}${esc(v)}</span>`).join('')
+      ? vals.map((v) => `<span class="tag${f.icon ? ' icontag' : ''}">${f.swatch ? swatch(v) : ''}${f.icon ? careIcon(v) : ''}${esc(v)}</span>`).join('')
       : `${esc(f.label)} wählen`}</span><span aria-hidden="true">›</span>`;
   }
   renderAnteile();
@@ -2555,13 +2581,20 @@ function renderAnteilSum() {
 /* ---------------- Auswahldialog für Farbe, Material, Größe ---------------- */
 let optKey = null;
 let optOpen = -1; // aufgeklappte Gruppe (nur bei Feldern mit Gruppen, z. B. Größe)
+/** Auswahlwerte eines Felds inkl. selbst angelegter (z. B. eigene Materialien) */
+function optionsOf(key) {
+  const f = FIELD[key];
+  if (!f.custom) return f.options;
+  const extra = [...valuesFor(key, [...items, ...wishes, ...trashItems]).keys(), ...(ed?.vals[key] || [])].filter((v) => !f.order.has(v));
+  return [...f.options, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
+}
 function openOptions(key) {
   optKey = key;
   $('#optSearch').value = '';
   $('#optDone').textContent = FIELD[key].type === 'multi' ? 'Fertig' : 'Schließen';
   const f = FIELD[key];
   const sel = fieldValues(ed.vals, key);
-  optOpen = f.groups ? f.groups.findIndex(([, opts]) => opts.some((o) => sel.includes(o))) : -1;
+  optOpen = f.groups && !f.flatGroups ? f.groups.findIndex(([, opts]) => opts.some((o) => sel.includes(o))) : -1;
   renderOptions();
   $('#optDlg').showModal();
   ($('#optList .ochip.active') || $('#optList .kl2.open'))?.scrollIntoView({ block: 'center' });
@@ -2571,19 +2604,23 @@ function renderOptions() {
   const q = $('#optSearch').value.trim().toLowerCase();
   const sel = new Set(fieldValues(ed.vals, optKey));
   $('#optTitle').textContent = f.type === 'multi' && sel.size ? `${f.label} (${sel.size})` : f.label;
-  const groups = f.groups || [[null, f.options]];
-  const chips = (hits) => `<div class="ochips${f.swatch ? ' swatches' : ''}">${hits.map((o) =>
-    `<button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.swatch ? swatch(o) : ''}${esc(o)}</button>`).join('')}</div>`;
+  const groups = f.groups || [[null, optionsOf(optKey)]];
+  const chips = (hits) => `<div class="ochips${f.swatch ? ' swatches' : ''}${f.icon ? ' icons' : ''}">${hits.map((o) =>
+    `<button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.swatch ? swatch(o) : ''}${f.icon ? careIcon(o) : ''}${esc(o)}</button>`).join('')}</div>`;
   const html = groups.map(([g, opts], gi) => {
     const hits = opts.filter((o) => !q || o.toLowerCase().includes(q) || (g && g.toLowerCase().includes(q)));
     if (!hits.length) return '';
     if (!g) return chips(hits);
+    if (f.flatGroups) return `<h4 class="ogroup">${esc(g)}</h4>${chips(hits)}`;
     const open = !!q || optOpen === gi;
     const picked = opts.filter((o) => sel.has(o));
     return `<button type="button" class="kl2${open ? ' open' : ''}${picked.length ? ' chosen' : ''}" data-og="${gi}" aria-expanded="${open}">
       <span>${esc(g)}${picked.length && !open ? `<small>${esc(picked.join(', '))}</small>` : ''}</span><span class="chev" aria-hidden="true">›</span></button>${open ? chips(hits) : ''}`;
   }).join('');
-  $('#optList').innerHTML = html || '<p class="muted">Nichts gefunden.</p>';
+  const raw = $('#optSearch').value.trim();
+  const canAdd = f.custom && raw && !optionsOf(optKey).some((o) => o.toLowerCase() === raw.toLowerCase());
+  const add = canAdd ? `<button type="button" class="chipbtn addval" data-newval="${esc(raw)}">+ „${esc(raw)}“ als neues ${esc(f.label)} hinzufügen</button>` : '';
+  $('#optList').innerHTML = (html || (add ? '' : '<p class="muted">Nichts gefunden.</p>')) + add;
 }
 
 /** Alle bekannten Anlässe: Vorgaben + bei Teilen und Outfits verwendete */
@@ -4161,13 +4198,13 @@ function wireEvents() {
   });
 
   // Datum leeren, Preis beim Verlassen schön formatieren, ungültigen Preis/Link markieren
-  $('#fieldGrid').addEventListener('click', (e) => {
+  onFields('click', (e) => {
     const st = e.target.closest('[data-step]');
     if (st) { const inp = st.parentElement.querySelector('input'); inp.value = Math.min(99, Math.max(1, (parseInt(inp.value, 10) || 1) + Number(st.dataset.step))); return; }
     const c = e.target.closest('[data-clear]');
     if (c) { $('#editForm').elements[c.dataset.clear].value = ''; }
   });
-  $('#fieldGrid').addEventListener('focusout', (e) => {
+  onFields('focusout', (e) => {
     const el = e.target;
     if (el.name === 'preis' && el.value.trim()) {
       const n = parsePrice(el.value);
@@ -4181,7 +4218,7 @@ function wireEvents() {
     }
   });
   // Auswahlfelder
-  $('#fieldGrid').addEventListener('click', (e) => {
+  onFields('click', (e) => {
     const pick = e.target.closest('[data-pick]');
     if (pick) return openOptions(pick.dataset.pick);
     const chip = e.target.closest('[data-chip]');
@@ -4201,13 +4238,21 @@ function wireEvents() {
       $(`#optList .kl2[data-og="${gi}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       return;
     }
+    const nv = e.target.closest('[data-newval]');
+    if (nv) {
+      const v = nv.dataset.newval.charAt(0).toUpperCase() + nv.dataset.newval.slice(1);
+      ed.vals[optKey] = [...(ed.vals[optKey] || []), v];
+      $('#optSearch').value = '';
+      renderOptions();
+      return;
+    }
     const b = e.target.closest('.ochip');
     if (!b) return;
     const f = FIELD[optKey], v = b.dataset.val;
     if (f.type === 'multi') {
       const set = new Set(ed.vals[optKey]);
       set.has(v) ? set.delete(v) : set.add(v);
-      ed.vals[optKey] = f.all.filter((o) => set.has(o)); // feste Reihenfolge
+      ed.vals[optKey] = (f.custom ? optionsOf(optKey) : f.all).filter((o) => set.has(o)); // feste Reihenfolge
       if (optKey === 'farben') ed.autoColor = false;
       renderOptions();
     } else {
@@ -4221,7 +4266,7 @@ function wireEvents() {
     if (FIELD[optKey].type === 'multi') renderOptions(); else $('#optDlg').close();
   });
   $('#optDlg').addEventListener('close', () => { if (ed) renderPickFields(); });
-  $('#fieldGrid').addEventListener('input', (e) => {
+  onFields('input', (e) => {
     const m = e.target.dataset?.anteil;
     if (m === undefined || !ed) return;
     const v = e.target.value.trim();
@@ -4527,6 +4572,7 @@ async function init() {
   wirePlanner();
   wireWeather();
   wireTrash();
+  wireValues();
   registerSW();
   $('#updateBtn').addEventListener('click', checkForUpdate);
   await DB.open();
@@ -4666,6 +4712,77 @@ async function cleanupPhotos() {
   } catch (e) {
     out.textContent = 'Aufräumen fehlgeschlagen: ' + e.message;
   } finally { btn.disabled = false; }
+}
+/* ---------------- Eigene Einträge verwalten (Anlässe, Materialien, Marken, Lagerorte) ---------------- */
+const VALUE_KINDS = [
+  { key: 'anlass', label: 'Anlässe', one: 'Anlass', builtin: ANLASS_DEFAULTS, outfits: true },
+  { key: 'materialien', label: 'Materialien', one: 'Material', builtin: MATERIALIEN },
+  { key: 'marke', label: 'Marken', one: 'Marke', builtin: [] },
+  { key: 'lagerort', label: 'Lagerorte', one: 'Lagerort', builtin: [] },
+];
+let valueKind = 'anlass';
+function renderValues() {
+  const kind = VALUE_KINDS.find((k) => k.key === valueKind);
+  $('#valueKinds').innerHTML = VALUE_KINDS.map((k) => `<button type="button" class="chipbtn${k.key === valueKind ? ' active' : ''}" data-kind="${k.key}">${esc(k.label)}</button>`).join('');
+  const count = new Map();
+  const pools = [items, wishes, trashItems, ...(kind.outfits ? [outfits, trashOutfits] : [])];
+  for (const pool of pools) for (const [v, n] of valuesFor(kind.key, pool)) count.set(v, (count.get(v) || 0) + n);
+  const own = [...count.keys()].filter((v) => !kind.builtin.includes(v)).sort((a, b) => a.localeCompare(b, 'de'));
+  $('#valueList').innerHTML = own.length ? own.map((v) => `<div class="orow vrow"><span><b>${esc(v)}</b><small>${count.get(v)} × verwendet</small></span>
+      <button type="button" class="chipbtn" data-vrename="${esc(v)}">Umbenennen</button>
+      <button type="button" class="x" data-vdelete="${esc(v)}" aria-label="${esc(v)} löschen">✕</button></div>`).join('')
+    : `<p class="muted">Keine selbst angelegten ${esc(kind.label)}.</p>`;
+}
+/** Wert überall umbenennen (to = '' löscht ihn) – in Teilen, Wünschen, Papierkorb und (bei Anlässen) Outfits */
+async function renameValueEverywhere(key, from, to) {
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const store of key === 'anlass' ? ['items', 'outfits'] : ['items']) {
+    for (const rec of await DB.all(store)) {
+      if (rec._deleted) continue;
+      let upd = null;
+      if (Array.isArray(rec[key])) upd = renamedMulti(rec, key, from, to);
+      else if (rec[key] === from) upd = { [key]: to };
+      if (!upd) continue;
+      await DB.put(store, { ...rec, ...upd, updatedAt: now, _dirty: true });
+      n++;
+    }
+  }
+  // Gespeicherte Filter mitziehen
+  for (const [fs, lsKey] of [[filters, 'ks_filters'], [wishFilters, 'ks_wfilters'], [outfitFilters, 'ks_ofilters']]) {
+    if (fs[key] !== from) continue;
+    if (to) fs[key] = to; else delete fs[key];
+    localStorage.setItem(lsKey, JSON.stringify(fs));
+  }
+  await loadState();
+  render();
+  scheduleSync();
+  return n;
+}
+function wireValues() {
+  $('#valuesBtn').addEventListener('click', () => { renderValues(); $('#valuesDlg').showModal(); });
+  $('#valuesDlg').addEventListener('click', async (e) => {
+    const k = e.target.closest('[data-kind]');
+    if (k) { valueKind = k.dataset.kind; return renderValues(); }
+    const kind = VALUE_KINDS.find((x) => x.key === valueKind);
+    const r = e.target.closest('[data-vrename]');
+    if (r) {
+      const from = r.dataset.vrename;
+      const to = (prompt(`${kind.one} umbenennen:`, from) || '').trim();
+      if (!to || to === from) return;
+      const n = await renameValueEverywhere(kind.key, from, to);
+      renderValues();
+      return toast(`„${from}“ → „${to}“ bei ${n} ${n === 1 ? 'Eintrag' : 'Einträgen'} geändert`);
+    }
+    const d = e.target.closest('[data-vdelete]');
+    if (d) {
+      const from = d.dataset.vdelete;
+      if (!confirm(`„${from}“ bei allen Teilen${kind.outfits ? ' und Outfits' : ''} entfernen?`)) return;
+      const n = await renameValueEverywhere(kind.key, from, '');
+      renderValues();
+      return toast(`„${from}“ bei ${n} ${n === 1 ? 'Eintrag' : 'Einträgen'} entfernt`);
+    }
+  });
 }
 /** Einstellungen: von Hand nach einer neuen Version suchen */
 async function checkForUpdate() {

@@ -141,6 +141,8 @@
         <div class="row"><button type="button" id="matchAdd" class="chipbtn">+ Teile auswählen</button></div>
       </div>
 
+      <div id="fieldGrid2" class="fieldgrid"></div>
+
       <label class="field">Notiz
         <textarea name="notiz" rows="3" placeholder="optional"></textarea>
       </label>
@@ -279,6 +281,7 @@
     </div>
     <div id="detailWear" class="wearbox"></div>
     <div id="detailMatchBox" hidden>
+      <hr class="sep">
       <h3>Passt zu:</h3>
       <div id="detailMatch" class="olinks"></div>
     </div>
@@ -439,6 +442,19 @@
   <div class="sheetbody" id="trashBody"></div>
 </dialog>
 
+<dialog id="valuesDlg" class="sheet">
+  <header class="sheethead">
+    <button type="button" class="textbtn" data-close>Zurück</button>
+    <h2>Eigene Einträge</h2>
+    <span></span>
+  </header>
+  <div class="sheetbody">
+    <div class="chips" id="valueKinds"></div>
+    <p class="hint">Umbenennen oder Löschen ändert den Eintrag bei allen Teilen, Wünschen und Outfits, die ihn verwenden.</p>
+    <div id="valueList"></div>
+  </div>
+</dialog>
+
 <!-- Settings -->
 <dialog id="settings" class="sheet">
   <header class="sheethead">
@@ -487,6 +503,7 @@
       <button type="button" id="csvBtn" class="chipbtn">Als CSV exportieren</button>
       <button type="button" id="trashBtn" class="chipbtn">Papierkorb</button>
       <button type="button" id="cleanupBtn" class="chipbtn">Unbenutzte Fotos löschen</button>
+      <button type="button" id="valuesBtn" class="chipbtn">Eigene Einträge verwalten</button>
     </div>
     <p class="hint" id="cleanupInfo"></p>
     <p class="hint" id="whereHint"></p>
