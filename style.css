@@ -703,7 +703,12 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 
 /* Waschhinweise */
 .careicon { width: 22px; height: 24px; flex: 0 0 22px; }
-.ochips.icons .ochip { padding-left: 8px; }
+.ochips.icons { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 6px; }
+.orowopt { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.orowopt .ochip { flex: 1; min-width: 0; padding: 4px 12px 4px 8px; text-align: left; border-radius: 12px; }
+.orowopt .ochip.active { padding: 3px 11px 3px 7px; }
+.orowopt .kinfo { width: 26px; height: 26px; font-size: 13px; }
+.orowopt .kexpl { flex-basis: 100%; margin: 0 4px 6px 8px; }
 .ochips.icons .ochip .careicon { width: 30px; height: 32px; flex-basis: 30px; }
 .ogroup { margin: 14px 2px 8px; font-size: 14px; font-weight: 600; color: var(--muted); }
 .ogroup:first-child { margin-top: 2px; }
@@ -716,3 +721,4 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 /* Eigene Einträge verwalten */
 .vrow { grid-template-columns: 1fr auto auto; }
 .addval { margin-top: 12px; }
+#optList .ochips.icons { padding: 0 12px 12px 12px; }

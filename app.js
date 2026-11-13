@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.23.0';
+const APP_VERSION = '2.24.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2580,6 +2580,7 @@ function renderAnteilSum() {
 
 /* ---------------- Auswahldialog für Farbe, Material, Größe ---------------- */
 let optKey = null;
+let optInfo = null; // aufgeklappte Erklärung (Waschhinweise)
 let optOpen = -1; // aufgeklappte Gruppe (nur bei Feldern mit Gruppen, z. B. Größe)
 /** Auswahlwerte eines Felds inkl. selbst angelegter (z. B. eigene Materialien) */
 function optionsOf(key) {
@@ -2590,6 +2591,7 @@ function optionsOf(key) {
 }
 function openOptions(key) {
   optKey = key;
+  optInfo = null;
   $('#optSearch').value = '';
   $('#optDone').textContent = FIELD[key].type === 'multi' ? 'Fertig' : 'Schließen';
   const f = FIELD[key];
@@ -2605,8 +2607,13 @@ function renderOptions() {
   const sel = new Set(fieldValues(ed.vals, optKey));
   $('#optTitle').textContent = f.type === 'multi' && sel.size ? `${f.label} (${sel.size})` : f.label;
   const groups = f.groups || [[null, optionsOf(optKey)]];
-  const chips = (hits) => `<div class="ochips${f.swatch ? ' swatches' : ''}${f.icon ? ' icons' : ''}">${hits.map((o) =>
-    `<button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.swatch ? swatch(o) : ''}${f.icon ? careIcon(o) : ''}${esc(o)}</button>`).join('')}</div>`;
+  const chips = (hits) => f.icon
+    // Waschhinweise: eine Zeile je Hinweis, mit „?“ für die ausführliche Erklärung
+    ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${careIcon(o)}${esc(o)}</button>${
+      PFLEGE_INFO[o] ? `<button type="button" class="kinfo${optInfo === o ? ' on' : ''}" data-optinfo="${esc(o)}" aria-label="Was bedeutet ${esc(o)}?" aria-expanded="${optInfo === o}">?</button>` : ''}${
+      optInfo === o ? `<p class="kexpl">${esc(PFLEGE_INFO[o])}</p>` : ''}</div>`).join('')}</div>`
+    : `<div class="ochips${f.swatch ? ' swatches' : ''}">${hits.map((o) =>
+    `<button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.swatch ? swatch(o) : ''}${esc(o)}</button>`).join('')}</div>`;
   const html = groups.map(([g, opts], gi) => {
     const hits = opts.filter((o) => !q || o.toLowerCase().includes(q) || (g && g.toLowerCase().includes(q)));
     if (!hits.length) return '';
@@ -4238,6 +4245,15 @@ function wireEvents() {
       $(`#optList .kl2[data-og="${gi}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       return;
     }
+    const oi = e.target.closest('[data-optinfo]');
+    if (oi) {
+      optInfo = optInfo === oi.dataset.optinfo ? null : oi.dataset.optinfo;
+      const top = $('#optList').scrollTop;
+      renderOptions();
+      $('#optList').scrollTop = top;
+      return;
+    }
+    if (e.target.closest('.kexpl')) return;
     const nv = e.target.closest('[data-newval]');
     if (nv) {
       const v = nv.dataset.newval.charAt(0).toUpperCase() + nv.dataset.newval.slice(1);
