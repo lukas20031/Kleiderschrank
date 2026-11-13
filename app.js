@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.24.0';
+const APP_VERSION = '2.24.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2462,7 +2462,8 @@ async function openDetail(id) {
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
     ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, f.key === 'preis' && qty(it) > 1 && hasValue(it.preis)
       ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null,
-      f.icon ? `<span class="carelist">${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}${esc(v)}</span>`).join('')}</span>` : null]),
+      f.icon ? `<span class="carelist">${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}${esc(v)}${PFLEGE_INFO[v]
+        ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(PFLEGE_INFO[v])}</span>` : ''}</span>`).join('')}</span>` : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
   const link = normalizeUrl(it.link);

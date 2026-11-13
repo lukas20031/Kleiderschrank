@@ -722,3 +722,6 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 .vrow { grid-template-columns: 1fr auto auto; }
 .addval { margin-top: 12px; }
 #optList .ochips.icons { padding: 0 12px 12px 12px; }
+
+.carelist > span { flex-wrap: wrap; }
+.carelist .kexpl { flex-basis: 100%; margin: 0 0 6px 36px; }

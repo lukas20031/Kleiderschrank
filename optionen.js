@@ -51,13 +51,14 @@ const ZUSTAENDE = ['Neu mit Etikett', 'Neu', 'Wie neu', 'Sehr gut', 'Gut', 'Getr
 
 /* Waschhinweise (Pflegesymbole), gruppiert. Symbole als kleine SVGs (24×26, Strichstärke 1.6, currentColor). */
 const PFLEGE = [
-  ['Waschtemperatur', ['Nicht waschen', 'Handwäsche', 'Auf links drehen', 'Waschen bis 30 °C', 'Waschen bis 40 °C', 'Waschen bis 60 °C', 'Waschen bis 95 °C',
+  ['Waschen', ['Nicht waschen', 'Handwäsche', 'Auf links drehen']],
+  ['Waschtemperatur', ['Waschen bis 30 °C', 'Waschen bis 40 °C', 'Waschen bis 60 °C', 'Waschen bis 95 °C',
     'Niedrige Waschtemperatur', 'Normale Waschtemperatur', 'Hohe Waschtemperatur']],
   ['Schleudern', ['Nicht schleudern', 'Schonend schleudern', 'Max. schleudern']],
   ['Trocknen', ['Nicht in den Trockner', 'Trockner geeignet', 'Schonender Trockengang', 'Sehr schonender Trockengang', 'Schonend trocknen', 'Normal trocknen', 'Heiß trocknen',
     'Trocknen ohne Hitze', 'Nicht wringen', 'Liegend trocknen', 'Hängend trocknen', 'Im Schatten trocknen', 'Tropfnass trocknen']],
   ['Bügeln', ['Bügeln', 'Nicht bügeln', 'Nicht mit Dampf bügeln', 'Bügeln bei 110 °C', 'Bügeln bei 150 °C', 'Bügeln bei 200 °C']],
-  ['Chemische Reinigung', ['Nicht chemisch reinigen', 'Reinigung mit Perchlorethylen (P)', 'Reinigung mit Kohlenwasserstoff (F)']],
+  ['Chemische Reinigung', ['Nicht chemisch reinigen', 'Professionelle Reinigung', 'Reinigung mit Perchlorethylen (P)', 'Reinigung mit Kohlenwasserstoff (F)', 'Alle Lösemittel möglich (A)']],
   ['Bleichen', ['Nicht bleichen', 'Ohne Chlor bleichen', 'Bleichen erlaubt']],
 ];
 /* Ausführlichere Erklärungen (hinter dem „?“) */
@@ -95,6 +96,8 @@ const PFLEGE_INFO = {
   'Bügeln bei 150 °C': 'Zwei Punkte: mittlere Bügeltemperatur (max. 150 °C), z. B. für Wolle, Polyester oder Viskose.',
   'Bügeln bei 200 °C': 'Drei Punkte: hohe Bügeltemperatur (max. 200 °C), z. B. für Baumwolle und Leinen.',
   'Nicht chemisch reinigen': 'Darf nicht in die chemische Reinigung.',
+  'Professionelle Reinigung': 'Leerer Kreis: Das Teil darf professionell gereinigt werden (chemisch oder nass) – die Reinigung wählt das passende Verfahren.',
+  'Alle Lösemittel möglich (A)': 'Kreis mit „A“ (veraltet): chemische Reinigung mit allen üblichen Lösemitteln möglich. Steht nur noch auf älteren Etiketten.',
   'Reinigung mit Perchlorethylen (P)': 'Professionelle chemische Reinigung mit Perchlorethylen und den üblichen Lösemitteln möglich.',
   'Reinigung mit Kohlenwasserstoff (F)': 'Professionelle Reinigung nur mit schonenden Kohlenwasserstoff-Lösemitteln.',
   'Nicht bleichen': 'Kein Bleichmittel verwenden – auch keine Waschmittel mit Bleiche (z. B. viele Vollwaschmittel bei bunter Wäsche).',
@@ -148,6 +151,8 @@ const PFLEGE_ICON = (() => {
     'Bügeln bei 150 °C': `${iron}${dots(2, 16, 3, 13)}`,
     'Bügeln bei 200 °C': `${iron}${dots(3, 16, 3, 13)}`,
     'Nicht chemisch reinigen': `${circ}${x(4.5, 5, 19.5, 20)}`,
+    'Professionelle Reinigung': circ,
+    'Alle Lösemittel möglich (A)': `${circ}${txt('A', 15.7, 9)}`,
     'Reinigung mit Perchlorethylen (P)': `${circ}${txt('P', 15.7, 9)}`,
     'Reinigung mit Kohlenwasserstoff (F)': `${circ}${txt('F', 15.7, 9)}`,
     'Nicht bleichen': `${tri}${x(5, 6, 19, 22)}`,
