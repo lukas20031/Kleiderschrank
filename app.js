@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.25.0';
+const APP_VERSION = '2.25.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2169,10 +2169,17 @@ function setFiltersOpen(open, fromBack = false) {
   $('#filters').hidden = !open;
   document.body.classList.toggle('filtering', open);
   openDrop = null;
+  if (open) window.scrollTo(0, 0);
   if (open) history.pushState({ ksFilter: true }, '');
   else if (!fromBack && history.state?.ksFilter) history.back();
   render();
-  if (open) window.scrollTo(0, 0);
+  if (open) sizeFilters();
+}
+/** Vollbild-Filter: eigener Scrollbereich unter der (stehenbleibenden) Kopfleiste */
+function sizeFilters() {
+  const el = $('#filters');
+  if (el.hidden) return;
+  el.style.height = `${Math.max(200, window.innerHeight - el.getBoundingClientRect().top)}px`;
 }
 function render() {
   renderMain();
@@ -2466,12 +2473,14 @@ function stackCareList() {
   if (!list) return;
   const dd = list.closest('dd');
   dd.classList.remove('stack');
+  // Umbruch = Text steht nicht mehr neben dem Symbol, das „?“ rutscht in eine neue Zeile oder der Text bricht selbst um
   const wraps = [...list.children].some((row) => {
-    const icon = row.querySelector('.careicon');
-    const txt = [...row.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
-    if (!icon || !txt) return false;
-    const r = document.createRange(); r.selectNodeContents(txt);
-    return r.getClientRects().length > 1;
+    const icon = row.querySelector('.careicon')?.getBoundingClientRect();
+    const ct = row.querySelector('.ct');
+    const info = row.querySelector('.kinfo')?.getBoundingClientRect();
+    if (!icon || !ct) return false;
+    const t = ct.getBoundingClientRect();
+    return ct.getClientRects().length > 1 || t.top > icon.bottom - 4 || (info && info.top > icon.bottom - 4);
   });
   dd.classList.toggle('stack', wraps);
 }
@@ -2519,7 +2528,7 @@ async function openDetail(id) {
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
     ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, f.key === 'preis' && qty(it) > 1 && hasValue(it.preis)
       ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null,
-      f.icon ? `<span class="carelist">${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}${esc(v)}${PFLEGE_INFO[v]
+      f.icon ? `<span class="carelist">${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}<span class="ct">${esc(v)}</span>${PFLEGE_INFO[v]
         ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(PFLEGE_INFO[v])}</span>` : ''}</span>`).join('')}</span>` : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
@@ -2527,6 +2536,7 @@ async function openDetail(id) {
   $('#detailLink').hidden = !link;
   if (link) { $('#detailLink').href = link; $('#detailLinkHost').textContent = new URL(link).hostname.replace(/^www\./, ''); }
   requestAnimationFrame(stackCareList);
+  setTimeout(stackCareList, 300);
   const artInfo = ART_INFO[it.typ];
   $('#detailFields').innerHTML = rows.map(([k, v, sw, html]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${html || esc(v).replace(/\n/g, '<br>')}${k === 'Kategorie' && artInfo
     ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was ist ${esc(it.typ)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(artInfo)}</span>` : ''}</dd>`).join('')
@@ -4232,6 +4242,7 @@ function wireEvents() {
   $('#filterToggle').addEventListener('click', () => setFiltersOpen($('#filters').hidden));
   $('#filterDone').addEventListener('click', () => setFiltersOpen(false));
   // Zurück-Taste am Handy schließt den Filter statt die App
+  window.addEventListener('resize', sizeFilters);
   window.addEventListener('popstate', () => { if (!$('#filters').hidden) setFiltersOpen(false, true); });
   if (history.state?.ksFilter) history.replaceState(null, ''); // nach Neuladen kein verwaister Filter-Eintrag
   document.addEventListener('click', (e) => {
