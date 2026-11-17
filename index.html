@@ -45,6 +45,7 @@
 <div id="banner" class="banner" hidden></div>
 <div id="dropHint" class="drophint" hidden></div>
 <section id="filters" class="filters" hidden></section>
+<button type="button" id="filterDone" class="primary filterdone" hidden>Ergebnisse anzeigen</button>
 </div>
 
 
@@ -142,6 +143,10 @@
       </div>
 
       <div id="fieldGrid2" class="fieldgrid"></div>
+
+      <label class="field" hidden>Gehört
+        <select id="ownerSel"></select>
+      </label>
 
       <label class="field">Notiz
         <textarea name="notiz" rows="3" placeholder="optional"></textarea>
@@ -355,6 +360,9 @@
       <div class="field">Jahreszeit
         <div id="oSeasonChips" class="chips"></div>
       </div>
+      <label class="field" hidden>Gehört
+        <select id="oOwnerSel"></select>
+      </label>
       <label class="field">Notiz
         <textarea name="onotiz" rows="2" placeholder="optional"></textarea>
       </label>
@@ -463,6 +471,14 @@
     <button type="button" class="textbtn strong" data-close>Fertig</button>
   </header>
   <div class="sheetbody">
+    <h3>Benutzer</h3>
+    <div id="userList" class="userlist"></div>
+    <p class="hint" id="userHint" hidden>Antippen wählt den aktuellen Benutzer (neue Teile gehören ihm). Mit „anzeigen“ siehst du die Teile mehrerer Benutzer gleichzeitig. Verschieben: im Editor eines Teils unter „Gehört“.</p>
+    <div class="row">
+      <input id="userName" placeholder="Name" autocomplete="off" style="flex:1">
+      <button type="button" id="userAdd" class="chipbtn">Benutzer hinzufügen</button>
+    </div>
+
     <h3>Cloud-Speicher</h3>
     <div class="seg" id="provSeg" role="radiogroup" aria-label="Cloud-Speicher">
       <button type="button" data-prov="">Nur lokal</button>

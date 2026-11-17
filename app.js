@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.24.1';
+const APP_VERSION = '2.25.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -269,10 +269,10 @@ const DB = {
   db: null,
   open() {
     return new Promise((res, rej) => {
-      const r = indexedDB.open('kleiderschrank', 3);
+      const r = indexedDB.open('kleiderschrank', 4);
       r.onupgradeneeded = () => {
         const d = r.result;
-        for (const name of ['items', 'photos', 'outfits', 'packlisten']) {
+        for (const name of ['items', 'photos', 'outfits', 'packlisten', 'benutzer']) {
           if (!d.objectStoreNames.contains(name)) d.createObjectStore(name, { keyPath: 'id' });
         }
       };
@@ -585,24 +585,43 @@ let items = [];
 let wishes = [];         // Teile auf der Wunschliste (wunsch: true)
 const findItem = (id) => items.find((i) => i.id === id) || wishes.find((i) => i.id === id);
 let packlists = [];       // { id, name, von, bis, itemIds: [], want: {id: n}, packed: {id: n}, notiz } (früher: checked: [ids])
+let users = [];             // { id, name, createdAt } – leer = Einzelnutzer
+let allItems = [];          // alle (nicht gelöschten) Teile aller Benutzer
 let outfits = [];          // { id, name, itemIds: [], notiz, createdAt, updatedAt }            // sichtbare (nicht gelöschte) Teile
 let photoMap = new Map();  // photoId -> Datensatz {id, itemId, thumb, full, pendingUpload, pendingDelete}
 const urlCache = new Map();
 const filters = JSON.parse(localStorage.getItem('ks_filters') || '{}');
 
 async function loadState() {
+  users = (await DB.all('benutzer')).filter((u) => !u._deleted)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)) || a.id.localeCompare(b.id));
+  // Einträge ohne Benutzer gehören dem zuerst angelegten Benutzer
+  let assigned = 0;
+  if (users.length) {
+    const now = new Date().toISOString();
+    for (const store of ['items', 'outfits', 'packlisten']) {
+      for (const rec of await DB.all(store)) {
+        if (rec._deleted || (rec.owner && users.some((u) => u.id === rec.owner))) continue;
+        await DB.put(store, { ...rec, owner: users[0].id, updatedAt: now, _dirty: true });
+        assigned++;
+      }
+    }
+  }
+  const mine = (r) => !users.length || viewUsers().has(r.owner);
   const all = (await DB.all('items')).filter((i) => !i._deleted);
+  allItems = all.filter((i) => !i.geloescht);
+  const vis = all.filter(mine);
   // Papierkorb: als gelöscht markierte Einträge getrennt halten
-  trashItems = all.filter((i) => i.geloescht);
-  const live = all.filter((i) => !i.geloescht);
+  trashItems = vis.filter((i) => i.geloescht);
+  const live = vis.filter((i) => !i.geloescht);
   // Wunschliste: eigene Liste, taucht sonst nirgends auf (Outfits, Statistik, Planer …)
   items = live.filter((i) => !i.wunsch);
   wishes = live.filter((i) => i.wunsch);
-  const allO = (await DB.all('outfits')).filter((o) => !o._deleted);
+  const allO = (await DB.all('outfits')).filter((o) => !o._deleted && mine(o));
   outfits = allO.filter((o) => !o.geloescht); trashOutfits = allO.filter((o) => o.geloescht);
-  const allP = (await DB.all('packlisten')).filter((o) => !o._deleted);
+  const allP = (await DB.all('packlisten')).filter((o) => !o._deleted && mine(o));
   packlists = allP.filter((o) => !o.geloescht); trashPacks = allP.filter((o) => o.geloescht);
-  if (await migrateItems(all) && Auth.signedIn()) scheduleSync();
+  if ((await migrateItems(all) || assigned) && Auth.signedIn()) scheduleSync();
   photoMap = new Map((await DB.all('photos')).map((p) => [p.id, p]));
 }
 
@@ -1754,7 +1773,7 @@ function countPending() {
 }
 let pendingItems = 0;
 async function recountPending() {
-  pendingItems = [...await DB.all('items'), ...await DB.all('outfits'), ...await DB.all('packlisten')].filter((i) => i._dirty || i._deleted).length;
+  pendingItems = [...await DB.all('items'), ...await DB.all('outfits'), ...await DB.all('packlisten'), ...await DB.all('benutzer')].filter((i) => i._dirty || i._deleted).length;
 }
 
 function scheduleSync(ms = 1500) {
@@ -1816,6 +1835,7 @@ async function pushChanges() {
   await pushCollection(S, 'items');
   await pushCollection(S, 'outfits');
   await pushCollection(S, 'packlisten');
+  await pushCollection(S, 'benutzer');
   // 3. Fotos löschen – aber nur, wenn kein Teil/Outfit sie (z. B. nach einem Konflikt) doch noch verwendet
   const used = new Set([...await DB.all('items'), ...await DB.all('outfits')].filter((i) => !i._deleted).flatMap((i) => i.photos || []));
   for (const ph of await DB.all('photos')) {
@@ -1908,6 +1928,7 @@ async function pullChanges() {
   await pullCollection(S, 'items');
   await pullCollection(S, 'outfits');
   await pullCollection(S, 'packlisten');
+  await pullCollection(S, 'benutzer');
 
   // Fehlende Vorschaubilder laden, verwaiste lokale Fotos entfernen
   const all = [...await DB.all('items'), ...await DB.all('outfits')].filter((i) => !i._deleted);
@@ -2133,7 +2154,7 @@ function itemCardHtml(it, { selected = null } = {}) {
   return `<button type="button" class="card${selected ? ' selected' : ''}${selected !== null && (washAll(it) || it.status) ? ' dim' : ''}" data-id="${esc(it.id)}">
       ${url ? `<img class="thumb${isPng(pid) ? ' cut' : ''}" loading="lazy" src="${url}" alt="">` : `<div class="noimg">${pid ? 'Foto lädt …' : 'Kein Foto'}</div>`}
       ${flags.length ? `<span class="flags">${flags.map((f) => `<span class="nphotos${f.endsWith('Wäsche') ? ' wash' : f.endsWith('Fotos') || f.endsWith('×') ? '' : ' st'}">${esc(f)}</span>`).join('')}</span>` : ''}
-      ${selected !== null ? `<span class="check">${selected ? '✓' : ''}</span>` : ''}
+      ${selected !== null ? `<span class="check">${selected ? '✓' : ''}</span>` : ownerBadge(it)}
       ${it._dirty && Auth.configured && selected === null ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
       <div class="info"><div class="title${it.name ? '' : ' auto'}">${it.favorit ? '<span class="fav" title="Favorit">♥</span> ' : ''}${esc(itemTitle(it))}</div>
         <div class="sub">${farben.length ? `<span class="dots" title="${esc(farben.join(', '))}">${farben.slice(0, 5).map(swatch).join('')}</span>` : ''}${esc(sub || it.lagerort || '')}</div></div>
@@ -2141,7 +2162,24 @@ function itemCardHtml(it, { selected = null } = {}) {
 }
 
 let tab = ['outfits', 'wish', 'plan', 'stats'].includes(localStorage.getItem('ks_tab')) ? localStorage.getItem('ks_tab') : 'items';
+/** Filter als Vollbild öffnen/schließen; ein Verlaufseintrag sorgt dafür, dass „Zurück“ nur den Filter schließt */
+function setFiltersOpen(open, fromBack = false) {
+  const was = !$('#filters').hidden;
+  if (was === open) return;
+  $('#filters').hidden = !open;
+  document.body.classList.toggle('filtering', open);
+  openDrop = null;
+  if (open) history.pushState({ ksFilter: true }, '');
+  else if (!fromBack && history.state?.ksFilter) history.back();
+  render();
+  if (open) window.scrollTo(0, 0);
+}
 function render() {
+  renderMain();
+  $('#filterDone').hidden = $('#filters').hidden;
+  if (!$('#filters').hidden) $('#filterDone').textContent = `${$('#count').textContent.replace(/ ·.*$/, '') || 'Ergebnisse'} anzeigen`;
+}
+function renderMain() {
   document.body.dataset.tab = tab;
   for (const b of document.querySelectorAll('#tabbar [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
   $('#planView').hidden = tab !== 'plan';
@@ -2292,6 +2330,7 @@ function outfitCardHtml(o) {
   return `<button type="button" class="card outfit" data-outfit="${esc(o.id)}">
       ${collageHtml(o, false, !useCollage)}
       ${o._dirty && Auth.configured ? '<span class="pending" title="Noch nicht synchronisiert"></span>' : ''}
+      ${ownerBadge(o)}
       <div class="info"><div class="title${o.name ? '' : ' auto'}">${o.favorit ? '<span class="fav" title="Favorit">♥</span> ' : ''}${esc(outfitTitle(o))}</div><div class="sub">${esc(sub.join(' · '))}</div></div>
     </button>`;
 }
@@ -2327,6 +2366,7 @@ function openOutfitDetail(id) {
 let oed = null; // { id, isNew, itemIds: [] }
 function openOutfitEditor(id = null) {
   const o = id ? outfits.find((x) => x.id === id) : null;
+  ownerOptions($('#oOwnerSel'), o?.owner || curUserId());
   oed = {
     id: o?.id || uid(), isNew: !o, itemIds: [...(o?.itemIds || [])].filter((x) => items.some((i) => i.id === x)),
     anlass: new Set(o?.anlass || []), jahreszeit: new Set(o?.jahreszeit || []),
@@ -2376,6 +2416,7 @@ async function saveOutfit() {
     updatedAt: now,
     _dirty: true,
   };
+  if (users.length) o.owner = $('#oOwnerSel').value || prev?.owner || curUserId();
   if (!o.photos.length) delete o.photos;
   if (!Object.keys(o.photoTags).length) delete o.photoTags;
   await storePhotos(oed, o.id);
@@ -2417,6 +2458,22 @@ function renderPicker() {
   $('#pickGrid').innerHTML = list.map((it) => itemCardHtml(it, { selected: pick.selected.has(it.id) })).join('')
     || '<p class="muted">Keine passenden Teile.</p>';
   $('#pickDone').textContent = `Fertig (${pick.selected.size})`;
+}
+
+/** Detailansicht: brechen Waschhinweise um, stehen sie in voller Breite unter dem Label */
+function stackCareList() {
+  const list = $('#detailFields .carelist');
+  if (!list) return;
+  const dd = list.closest('dd');
+  dd.classList.remove('stack');
+  const wraps = [...list.children].some((row) => {
+    const icon = row.querySelector('.careicon');
+    const txt = [...row.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+    if (!icon || !txt) return false;
+    const r = document.createRange(); r.selectNodeContents(txt);
+    return r.getClientRects().length > 1;
+  });
+  dd.classList.toggle('stack', wraps);
 }
 
 /* ---------------- „Passt zu“: Verweise zwischen Teilen ----------------
@@ -2469,6 +2526,7 @@ async function openDetail(id) {
   const link = normalizeUrl(it.link);
   $('#detailLink').hidden = !link;
   if (link) { $('#detailLink').href = link; $('#detailLinkHost').textContent = new URL(link).hostname.replace(/^www\./, ''); }
+  requestAnimationFrame(stackCareList);
   const artInfo = ART_INFO[it.typ];
   $('#detailFields').innerHTML = rows.map(([k, v, sw, html]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${html || esc(v).replace(/\n/g, '<br>')}${k === 'Kategorie' && artInfo
     ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was ist ${esc(it.typ)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(artInfo)}</span>` : ''}</dd>`).join('')
@@ -2746,6 +2804,7 @@ function openEditor(id = null, copyId = null) {
   // Beim Duplizieren: alle Angaben übernehmen, aber neue ID, keine Fotos, kein Tragen-Verlauf
   const orig = id ? findItem(id) : null;
   const it = orig || (copyId ? findItem(copyId) : null);
+  ownerOptions($('#ownerSel'), orig?.owner || it?.owner || curUserId());
   ed = {
     id: orig?.id || uid(),
     isNew: !orig,
@@ -2807,6 +2866,7 @@ async function saveEditor() {
     updatedAt: now,
     _dirty: true,
   };
+  if (users.length) it.owner = $('#ownerSel').value || prev?.owner || curUserId();
   for (const f of FIELDS) {
     const raw = isInputField(f) ? form.elements[f.key].value.trim() : null;
     if (f.type === 'price') it[f.key] = parsePrice(raw);
@@ -3221,6 +3281,7 @@ async function updatePack(fn) {
   fn(p);
   if (!pk.saved && !p.name && !(p.itemIds || []).length) return;
   p.createdAt = p.createdAt || now; p.updatedAt = now; p._dirty = true;
+  if (users.length && !p.owner) p.owner = curUserId();
   await DB.put('packlisten', p);
   pk.saved = true;
   $('#packDelete').hidden = false;
@@ -4044,7 +4105,7 @@ function wireEvents() {
     tab = b.dataset.tab;
     localStorage.setItem('ks_tab', tab);
     $('#search').value = '';
-    $('#filters').hidden = true;
+    setFiltersOpen(false);
     render();
     window.scrollTo(0, 0);
   });
@@ -4168,7 +4229,11 @@ function wireEvents() {
     render();
   });
   $('#sort').addEventListener('change', () => { localStorage.setItem(sortKey(tab), $('#sort').value); render(); });
-  $('#filterToggle').addEventListener('click', () => { $('#filters').hidden = !$('#filters').hidden; openDrop = null; render(); });
+  $('#filterToggle').addEventListener('click', () => setFiltersOpen($('#filters').hidden));
+  $('#filterDone').addEventListener('click', () => setFiltersOpen(false));
+  // Zurück-Taste am Handy schließt den Filter statt die App
+  window.addEventListener('popstate', () => { if (!$('#filters').hidden) setFiltersOpen(false, true); });
+  if (history.state?.ksFilter) history.replaceState(null, ''); // nach Neuladen kein verwaister Filter-Eintrag
   document.addEventListener('click', (e) => {
     if (!openDrop || e.target.closest('.fdrop')) return;
     openDrop = null;
@@ -4507,7 +4572,7 @@ function wireEvents() {
     dlg.addEventListener('pointerdown', (e) => { downOutside = e.target === dlg && outside(e); });
     dlg.addEventListener('click', (e) => { if (downOutside && e.target === dlg && outside(e)) dlg.close(); downOutside = false; });
   }
-  $('#settingsBtn').addEventListener('click', () => { renderSettings(); $('#settings').showModal(); });
+  $('#settingsBtn').addEventListener('click', () => { renderSettings(); renderUsers(); $('#settings').showModal(); });
   $('#provSeg').addEventListener('click', async (e) => {
     const b = e.target.closest('button[data-prov]');
     if (!b || b.dataset.prov === provKey()) return;
@@ -4590,6 +4655,7 @@ async function init() {
   wireWeather();
   wireTrash();
   wireValues();
+  wireUsers();
   registerSW();
   $('#updateBtn').addEventListener('click', checkForUpdate);
   await DB.open();
@@ -4730,6 +4796,116 @@ async function cleanupPhotos() {
     out.textContent = 'Aufräumen fehlgeschlagen: ' + e.message;
   } finally { btn.disabled = false; }
 }
+/* ---------------- Mehrere Benutzer ----------------
+ * Benutzer liegen synchronisiert im Speicher „benutzer“. Welcher Benutzer auf diesem Gerät aktiv ist und
+ * wessen Teile angezeigt werden, merkt sich jedes Gerät selbst (localStorage). */
+function curUserId() {
+  const id = localStorage.getItem('ks_user');
+  return users.some((u) => u.id === id) ? id : users[0]?.id || '';
+}
+function viewUsers() {
+  let ids = [];
+  try { ids = JSON.parse(localStorage.getItem('ks_viewUsers') || '[]'); } catch { /* egal */ }
+  ids = ids.filter((id) => users.some((u) => u.id === id));
+  return new Set(ids.length ? ids : [curUserId()]);
+}
+const userName = (id) => users.find((u) => u.id === id)?.name || '';
+const multiView = () => users.length > 1 && viewUsers().size > 1;
+function ownerBadge(rec) {
+  if (!multiView()) return '';
+  const n = userName(rec.owner);
+  return n ? `<span class="ownerbadge" title="${esc(n)}">${esc(n.slice(0, 1).toUpperCase())}</span>` : '';
+}
+function renderUsers() {
+  const cur = curUserId(), view = viewUsers();
+  $('#userList').innerHTML = users.length ? users.map((u) => {
+    const n = allItems.filter((i) => i.owner === u.id).length;
+    return `<div class="urow${u.id === cur ? ' current' : ''}">
+      <button type="button" class="uselect" data-uselect="${esc(u.id)}" aria-pressed="${u.id === cur}"><span class="radio"></span><span><b>${esc(u.name)}</b><small>${n} ${n === 1 ? 'Teil' : 'Teile'}</small></span></button>
+      <label class="ushow"><input type="checkbox" data-ushow="${esc(u.id)}"${view.has(u.id) ? ' checked' : ''}> anzeigen</label>
+      <button type="button" class="x" data-urename="${esc(u.id)}" aria-label="${esc(u.name)} umbenennen" title="Umbenennen">✎</button>
+      <button type="button" class="x" data-udelete="${esc(u.id)}" aria-label="${esc(u.name)} löschen">✕</button>
+    </div>`;
+  }).join('') : '<p class="hint">Noch keine Benutzer – alle Teile gehören dir. Der erste Benutzer, den du anlegst, bekommt alle vorhandenen Teile.</p>';
+  $('#userHint').hidden = users.length < 2;
+}
+async function addUser(name) {
+  const now = new Date().toISOString();
+  const u = { id: uid(), name, createdAt: now, updatedAt: now, _dirty: true };
+  await DB.put('benutzer', u);
+  if (!users.length) localStorage.setItem('ks_user', u.id);
+  await afterUserChange();
+}
+async function afterUserChange() {
+  await loadState();
+  renderUsers();
+  render();
+  if (Auth.signedIn()) scheduleSync();
+}
+/** Alle Einträge eines Benutzers einem anderen geben */
+async function moveAllOwned(from, to) {
+  const now = new Date().toISOString();
+  for (const store of ['items', 'outfits', 'packlisten']) {
+    for (const rec of await DB.all(store)) if (!rec._deleted && rec.owner === from) await DB.put(store, { ...rec, owner: to, updatedAt: now, _dirty: true });
+  }
+}
+function wireUsers() {
+  $('#userAdd').addEventListener('click', async () => {
+    const name = $('#userName').value.trim();
+    if (!name) return $('#userName').focus();
+    if (users.some((u) => u.name.toLowerCase() === name.toLowerCase())) return toast('Diesen Namen gibt es schon.');
+    $('#userName').value = '';
+    await addUser(name);
+  });
+  $('#userName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#userAdd').click(); } });
+  $('#userList').addEventListener('change', async (e) => {
+    const id = e.target.dataset.ushow;
+    if (!id) return;
+    const view = viewUsers();
+    if (e.target.checked) view.add(id); else view.delete(id);
+    if (!view.size) view.add(curUserId());
+    localStorage.setItem('ks_viewUsers', JSON.stringify([...view]));
+    await afterUserChange();
+  });
+  $('#userList').addEventListener('click', async (e) => {
+    const sel = e.target.closest('[data-uselect]');
+    if (sel) {
+      localStorage.setItem('ks_user', sel.dataset.uselect);
+      localStorage.setItem('ks_viewUsers', JSON.stringify([sel.dataset.uselect]));
+      return afterUserChange();
+    }
+    const rn = e.target.closest('[data-urename]');
+    if (rn) {
+      const u = users.find((x) => x.id === rn.dataset.urename);
+      const name = (prompt('Benutzer umbenennen:', u.name) || '').trim();
+      if (!name || name === u.name) return;
+      await DB.put('benutzer', { ...u, name, updatedAt: new Date().toISOString(), _dirty: true });
+      return afterUserChange();
+    }
+    const del = e.target.closest('[data-udelete]');
+    if (del) {
+      const u = users.find((x) => x.id === del.dataset.udelete);
+      const others = users.filter((x) => x.id !== u.id);
+      const n = allItems.filter((i) => i.owner === u.id).length;
+      const heir = others.find((x) => x.id === curUserId()) || others[0];
+      if (!confirm(others.length
+        ? `Benutzer „${u.name}“ löschen?${n ? `\n\nSeine ${n} Teile (und Outfits/Packlisten) gehen an „${heir.name}“.` : ''}`
+        : `Benutzer „${u.name}“ löschen? Die App ist dann wieder ohne Benutzer.`)) return;
+      if (heir) await moveAllOwned(u.id, heir.id);
+      await DB.put('benutzer', { ...u, _deleted: true, _dirty: true });
+      if (!u._etag) await DB.del('benutzer', u.id);
+      if (localStorage.getItem('ks_user') === u.id && heir) localStorage.setItem('ks_user', heir.id);
+      return afterUserChange();
+    }
+  });
+}
+/** Editor: Auswahl „Gehört“ (nur bei mehreren Benutzern) */
+function ownerOptions(sel, owner) {
+  const field = sel.closest('.field');
+  field.hidden = users.length < 2;
+  sel.innerHTML = users.map((u) => `<option value="${esc(u.id)}"${u.id === owner ? ' selected' : ''}>${esc(u.name)}</option>`).join('');
+}
+
 /* ---------------- Eigene Einträge verwalten (Anlässe, Materialien, Marken, Lagerorte) ---------------- */
 const VALUE_KINDS = [
   { key: 'anlass', label: 'Anlässe', one: 'Anlass', builtin: ANLASS_DEFAULTS, outfits: true },

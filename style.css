@@ -725,3 +725,22 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 
 .carelist > span { flex-wrap: wrap; }
 .carelist .kexpl { flex-basis: 100%; margin: 0 0 6px 36px; }
+
+/* Filter als Vollbild */
+body.filtering main, body.filtering .tabbar, body.filtering #viewChips { display: none !important; }
+body.filtering .appbar .filters { max-height: none; min-height: calc(100dvh - 190px); padding-bottom: 90px; }
+.filterdone { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 6; padding: 14px; border-radius: 14px; font-size: 16px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+/* Detail: Waschhinweise in voller Breite */
+.props dd.stack { grid-column: 1 / -1; margin-top: -4px; }
+/* Benutzer */
+.userlist { display: grid; gap: 8px; margin-bottom: 10px; }
+.urow { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px; }
+.urow.current { border-color: var(--accent); }
+.uselect { flex: 1 1 auto; display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 4px; text-align: left; min-width: 0; color: inherit; }
+.uselect b { display: block; }
+.uselect small { color: var(--muted); }
+.uselect .radio { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--muted); flex: 0 0 18px; }
+.urow.current .radio { border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--card), inset 0 0 0 9px var(--accent); }
+.ushow { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.ownerbadge { position: absolute; top: 6px; right: 22px; z-index: 2; width: 22px; height: 22px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+#userName { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font: inherit; min-width: 0; }
