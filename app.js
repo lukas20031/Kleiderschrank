@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.25.1';
+const APP_VERSION = '2.25.2';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2162,16 +2162,33 @@ function itemCardHtml(it, { selected = null } = {}) {
 }
 
 let tab = ['outfits', 'wish', 'plan', 'stats'].includes(localStorage.getItem('ks_tab')) ? localStorage.getItem('ks_tab') : 'items';
+/** Registerkarte wechseln. Andere Karten als „Teile“ bekommen einen Verlaufseintrag,
+ *  damit die Zurück-Taste am Handy zu „Teile“ führt statt die App zu schließen. */
+let selfBack = 0; // eigene history.back()-Aufrufe, deren popstate ignoriert wird
+function switchTab(next, fromBack = false) {
+  const prev = tab;
+  tab = next;
+  localStorage.setItem('ks_tab', tab);
+  $('#search').value = '';
+  setFiltersOpen(false);
+  if (!fromBack) {
+    if (prev === 'items' && next !== 'items') history.pushState({ ksTab: true }, '');
+    else if (next === 'items' && history.state?.ksTab) { selfBack++; history.back(); }
+  }
+  render();
+  window.scrollTo(0, 0);
+}
 /** Filter als Vollbild öffnen/schließen; ein Verlaufseintrag sorgt dafür, dass „Zurück“ nur den Filter schließt */
 function setFiltersOpen(open, fromBack = false) {
-  const was = !$('#filters').hidden;
+  const el = $('#filters');
+  const was = !el.hidden;
   if (was === open) return;
   $('#filters').hidden = !open;
   document.body.classList.toggle('filtering', open);
   openDrop = null;
   if (open) window.scrollTo(0, 0);
-  if (open) history.pushState({ ksFilter: true }, '');
-  else if (!fromBack && history.state?.ksFilter) history.back();
+  if (open) { history.pushState({ ksFilter: true }, ''); el.scrollTop = 0; }
+  else if (!fromBack && history.state?.ksFilter) { selfBack++; history.back(); }
   render();
   if (open) sizeFilters();
 }
@@ -2183,7 +2200,7 @@ function sizeFilters() {
 }
 function render() {
   renderMain();
-  $('#filterDone').hidden = $('#filters').hidden;
+  $('#filterBar').hidden = $('#filters').hidden;
   if (!$('#filters').hidden) $('#filterDone').textContent = `${$('#count').textContent.replace(/ ·.*$/, '') || 'Ergebnisse'} anzeigen`;
 }
 function renderMain() {
@@ -4112,12 +4129,7 @@ function wireEvents() {
   $('#tabbar').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
     if (!b || b.dataset.tab === tab) return;
-    tab = b.dataset.tab;
-    localStorage.setItem('ks_tab', tab);
-    $('#search').value = '';
-    setFiltersOpen(false);
-    render();
-    window.scrollTo(0, 0);
+    switchTab(b.dataset.tab);
   });
 
   // Outfits: Detail, Editor, Teile-Auswahl
@@ -4241,10 +4253,17 @@ function wireEvents() {
   $('#sort').addEventListener('change', () => { localStorage.setItem(sortKey(tab), $('#sort').value); render(); });
   $('#filterToggle').addEventListener('click', () => setFiltersOpen($('#filters').hidden));
   $('#filterDone').addEventListener('click', () => setFiltersOpen(false));
+  $('#filterReset').addEventListener('click', () => $('#filters [data-reset-filters]')?.click());
   // Zurück-Taste am Handy schließt den Filter statt die App
   window.addEventListener('resize', sizeFilters);
-  window.addEventListener('popstate', () => { if (!$('#filters').hidden) setFiltersOpen(false, true); });
-  if (history.state?.ksFilter) history.replaceState(null, ''); // nach Neuladen kein verwaister Filter-Eintrag
+  // Zurück-Taste: erst den Filter schließen, dann zur Registerkarte „Teile“
+  window.addEventListener('popstate', () => {
+    if (selfBack) { selfBack--; return; }
+    if (!$('#filters').hidden) return setFiltersOpen(false, true);
+    if (tab !== 'items') switchTab('items', true);
+  });
+  if (history.state?.ksFilter || history.state?.ksTab) history.replaceState(null, ''); // nach Neuladen keine verwaisten Einträge
+  if (tab !== 'items') history.pushState({ ksTab: true }, '');
   document.addEventListener('click', (e) => {
     if (!openDrop || e.target.closest('.fdrop')) return;
     openDrop = null;

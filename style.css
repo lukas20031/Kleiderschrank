@@ -731,9 +731,13 @@ body.filtering main, body.filtering .tabbar, body.filtering #viewChips { display
 body.filtering .appbar .filters { max-height: none; overflow-y: auto; overscroll-behavior: contain; align-content: start; padding-bottom: 96px; }
 body.filtering { overflow: hidden; }
 body.filtering #addBtn { display: none !important; }
-.filterdone { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 6; padding: 14px; border-radius: 14px; font-size: 16px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.filterbar { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 6; display: flex; gap: 10px; }
+.filterbar > button { padding: 14px; border-radius: 14px; font-size: 16px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.filterbar #filterDone { flex: 1; }
+.filterbar #filterReset { flex: 0 0 auto; padding: 14px 18px; background: var(--card); }
+body.filtering #filters [data-reset-filters] { display: none; }
 /* Detail: Waschhinweise in voller Breite */
-.props dd.stack { grid-column: 1 / -1; margin-top: -4px; }
+.props dd.stack { grid-column: 1 / -1; margin-top: -4px; justify-self: end; max-width: 100%; }
 /* Benutzer */
 .userlist { display: grid; gap: 8px; margin-bottom: 10px; }
 .urow { display: flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px; }
