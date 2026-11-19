@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.25.3';
+const APP_VERSION = '2.25.4';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -191,6 +191,7 @@ function normalizeSize(raw) {
   return FIELD.groesse.order.has(v) ? v : null;
 }
 // Umbenannte Materialien: 2.22 „Elasthan“, 2.23 „Polyacryl (Acryl)“
+const PFLEGE_RENAME = { 'Auf links drehen': 'Von links waschen' }; // 2.25.4
 const MAT_RENAME = { Elastan: 'Elasthan', Acryl: 'Polyacryl (Acryl)', Polyacryl: 'Polyacryl (Acryl)' };
 /** Wert in einem Listenfeld umbenennen (to = '' löscht ihn); bei Materialien auch den Prozentanteil mitnehmen.
  *  Gibt die geänderten Felder zurück oder null, wenn der Wert nicht vorkommt. */
@@ -213,7 +214,8 @@ async function migrateItems(list) {
     // Von einer neueren App-Version gespeichert: nicht anfassen (sonst schaukeln sich zwei Geräte gegenseitig hoch)
     if ((it.v || 0) > DATA_VERSION) { newer = true; continue; }
     const needCat = it.kategorie && !CAT.l1.has(it.kategorie);
-    const needMat = (it.materialien || []).some((m) => MAT_RENAME[m]); // umbenannte Materialien
+    const needMat = (it.materialien || []).some((m) => MAT_RENAME[m]) // umbenannte Materialien
+      || (it.pflege || []).some((p) => PFLEGE_RENAME[p]); // umbenannte Waschhinweise
     if (it.v === DATA_VERSION && !needCat && !needMat) continue;
     const upd = { ...it, _dirty: true, v: DATA_VERSION };
     const alt = { ...(it.alt || {}) };
@@ -246,7 +248,10 @@ async function migrateItems(list) {
     }
     const mv = moveCat(upd.kategorie, upd.unterkategorie, upd.typ);
     if (mv) [upd.kategorie, upd.unterkategorie, upd.typ] = mv;
-    if (needMat) for (const [from, to] of Object.entries(MAT_RENAME)) Object.assign(upd, renamedMulti(upd, 'materialien', from, to));
+    if (needMat) {
+      for (const [from, to] of Object.entries(MAT_RENAME)) Object.assign(upd, renamedMulti(upd, 'materialien', from, to));
+      for (const [from, to] of Object.entries(PFLEGE_RENAME)) Object.assign(upd, renamedMulti(upd, 'pflege', from, to));
+    }
     if (Object.keys(alt).length) upd.alt = alt; else delete upd.alt;
     await DB.put('items', upd);
     Object.assign(it, upd);
@@ -2617,6 +2622,16 @@ function buildFieldInputs() {
   $('#fieldGrid2').innerHTML = html.filter((_, i) => FIELDS[i].slot === 2).join('');
 }
 const careIcon = (v) => PFLEGE_ICON[v] || '';
+/* Auswahldialoge (Farbe, Material, Kategorie, Teile …) öffnen immer ganz oben */
+{
+  const show = HTMLDialogElement.prototype.showModal;
+  HTMLDialogElement.prototype.showModal = function showModalTop(...args) {
+    show.apply(this, args);
+    if (this.id === 'cropDlg') return;
+    const top = () => { this.scrollTop = 0; for (const el of this.querySelectorAll('.sheetbody, .katlist, #pickGrid')) el.scrollTop = 0; };
+    top(); requestAnimationFrame(top);
+  };
+}
 function onFields(type, fn) { for (const el of document.querySelectorAll('#fieldGrid, #fieldGrid2')) el.addEventListener(type, fn); }
 function fillDatalists() {
   for (const f of FIELDS.filter((x) => x.type === 'text')) {

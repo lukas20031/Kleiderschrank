@@ -51,13 +51,13 @@ const ZUSTAENDE = ['Neu mit Etikett', 'Neu', 'Wie neu', 'Sehr gut', 'Gut', 'Getr
 
 /* Waschhinweise (Pflegesymbole), gruppiert. Symbole als kleine SVGs (24×26, Strichstärke 1.6, currentColor). */
 const PFLEGE = [
-  ['Waschen', ['Nicht waschen', 'Handwäsche', 'Auf links drehen']],
+  ['Waschen', ['Nicht waschen', 'Handwäsche', 'Von links waschen', 'Mit ähnlichen Farben waschen']],
   ['Waschtemperatur', ['Waschen bis 30 °C', 'Waschen bis 40 °C', 'Waschen bis 60 °C', 'Waschen bis 95 °C',
     'Niedrige Waschtemperatur', 'Normale Waschtemperatur', 'Hohe Waschtemperatur']],
   ['Schleudern', ['Nicht schleudern', 'Schonend schleudern', 'Max. schleudern']],
   ['Trocknen', ['Nicht in den Trockner', 'Trockner geeignet', 'Schonender Trockengang', 'Sehr schonender Trockengang', 'Schonend trocknen', 'Normal trocknen', 'Heiß trocknen',
     'Trocknen ohne Hitze', 'Nicht wringen', 'Liegend trocknen', 'Hängend trocknen', 'Im Schatten trocknen', 'Tropfnass trocknen']],
-  ['Bügeln', ['Bügeln', 'Nicht bügeln', 'Nicht mit Dampf bügeln', 'Bügeln bei 110 °C', 'Bügeln bei 150 °C', 'Bügeln bei 200 °C']],
+  ['Bügeln', ['Bügeln', 'Nicht bügeln', 'Nicht mit Dampf bügeln', 'Von links bügeln', 'Druck nicht bügeln', 'Stickerei nicht bügeln', 'Knöpfe nicht bügeln', 'Bügeln bei 110 °C', 'Bügeln bei 150 °C', 'Bügeln bei 200 °C']],
   ['Chemische Reinigung', ['Nicht chemisch reinigen', 'Professionelle Reinigung', 'Reinigung mit Perchlorethylen (P)', 'Reinigung mit Kohlenwasserstoff (F)', 'Alle Lösemittel möglich (A)']],
   ['Bleichen', ['Nicht bleichen', 'Ohne Chlor bleichen', 'Bleichen erlaubt']],
 ];
@@ -65,7 +65,12 @@ const PFLEGE = [
 const PFLEGE_INFO = {
   'Nicht waschen': 'Das Teil darf weder in der Maschine noch von Hand gewaschen werden – meist ist nur chemische Reinigung möglich.',
   'Handwäsche': 'Nur von Hand waschen, höchstens ca. 40 °C. Nicht reiben oder wringen, sondern sanft drücken; manche Maschinen haben ein Handwäsche-Programm.',
-  'Auf links drehen': 'Vor dem Waschen auf die Innenseite drehen. Schützt Drucke, Farben und die Oberfläche vor Abrieb und Pilling.',
+  'Von links waschen': 'Vor dem Waschen auf links (Innenseite nach außen) drehen. Schützt Drucke, Farben und die Oberfläche vor Abrieb und Pilling.',
+  'Mit ähnlichen Farben waschen': 'Nur mit Wäsche in ähnlichen Farben waschen – das Teil kann abfärben oder selbst Farbe annehmen.',
+  'Von links bügeln': 'Auf links gedreht bügeln, damit die Außenseite nicht glänzt und Drucke oder empfindliche Oberflächen geschützt sind.',
+  'Druck nicht bügeln': 'Aufdrucke nicht direkt bügeln – sie können schmelzen oder am Bügeleisen kleben. Von links oder mit Tuch dazwischen bügeln.',
+  'Stickerei nicht bügeln': 'Stickereien nicht direkt bügeln, sonst werden sie platt gedrückt. Von links auf einem Handtuch bügeln.',
+  'Knöpfe nicht bügeln': 'Nicht über Knöpfe bügeln – sie können zerkratzen, brechen oder schmelzen. Um die Knöpfe herum bügeln.',
   'Waschen bis 30 °C': 'Maschinenwäsche bei höchstens 30 °C.',
   'Waschen bis 40 °C': 'Maschinenwäsche bei höchstens 40 °C – die häufigste Angabe für Alltagskleidung.',
   'Waschen bis 60 °C': 'Maschinenwäsche bei höchstens 60 °C, z. B. für Bettwäsche, Handtücher oder Unterwäsche.',
@@ -113,6 +118,7 @@ const PFLEGE_ICON = (() => {
   const sq = '<rect x="3.5" y="4" width="17" height="17" rx="1"/>';
   const ring = '<circle cx="12" cy="12.5" r="6.5"/>';
   const iron = '<path d="M2.5 19 C3.5 14 7 12 12 12 H21 V19 Z M9 12 V9.5 Q9 8 10.5 8 H21 V12"/>';
+  const ironS = `<g transform="translate(0 7) scale(.74)">${'<path d="M2.5 19 C3.5 14 7 12 12 12 H21 V19 Z M9 12 V9.5 Q9 8 10.5 8 H21 V12"/>'}</g>`;
   const tri = '<path d="M12 3.5 L21.5 21 H2.5 Z"/>';
   const circ = '<circle cx="12" cy="12.5" r="8.5"/>';
   // Hand, die von rechts oben ins Wasser greift
@@ -120,7 +126,12 @@ const PFLEGE_ICON = (() => {
   const ic = {
     'Nicht waschen': `<path d="${tub}"/>${x(3, 5, 21, 23)}`,
     'Handwäsche': `<path d="M3 9 q1.5-2 3 0 t3 0 M3.4 9 L5.5 20 H18.5 L20.6 9"/>${hand}`,
-    'Auf links drehen': '<path d="M8 4 L3.5 6.5 L5 10.5 L7 9.8 V21 H17 V9.8 L19 10.5 L20.5 6.5 L16 4 Q12 6.5 8 4 Z"/><path d="M9.2 14.5 A3.2 3.2 0 1 0 12 11.3"/><path d="M10.4 9.8 L12.2 11.3 L10.6 13"/>',
+    'Mit ähnlichen Farben waschen': '<path d="M5 6 L2 7.6 L3 10.2 L4.3 9.8 V17 H10.7 V9.8 L12 10.2 L13 7.6 L10 6 Q7.5 7.6 5 6 Z" fill="currentColor" fill-opacity=".2"/><path d="M14 9 L11 10.6 L12 13.2 L13.3 12.8 V20 H19.7 V12.8 L21 13.2 L22 10.6 L19 9 Q16.5 10.6 14 9 Z" fill="currentColor" fill-opacity=".45"/>',
+    'Von links bügeln': `${ironS}<g stroke-width="1.15"><path d="M15 6.5 A4 4 0 1 1 19 10.5"/><path d="M13.3 4.6 L15 6.8 L17.3 5.5"/></g>`,
+    'Druck nicht bügeln': `${ironS}<g stroke-width="1.15"><rect x="13" y="1.5" width="9.5" height="8.5" rx="1"/><path d="M15.6 4.2 H19.9 M17.75 4.2 V7.6"/>${x(12, 0.8, 23.5, 10.8)}</g>`,
+    'Stickerei nicht bügeln': `${ironS}<g stroke-width="1.15"><path d="M17.75 1 L19 4.2 L22.4 4.4 L19.8 6.6 L20.6 9.9 L17.75 8.1 L14.9 9.9 L15.7 6.6 L13.1 4.4 L16.5 4.2 Z"/>${x(12.3, 0.8, 23.2, 10.8)}</g>`,
+    'Knöpfe nicht bügeln': `${ironS}<g stroke-width="1.15"><circle cx="17.75" cy="5.8" r="4.3"/><circle cx="16.4" cy="5.8" r=".75" fill="currentColor" stroke="none"/><circle cx="19.1" cy="5.8" r=".75" fill="currentColor" stroke="none"/>${x(12.3, 0.6, 23.2, 11)}</g>`,
+    'Von links waschen': '<path d="M8 4 L3.5 6.5 L5 10.5 L7 9.8 V21 H17 V9.8 L19 10.5 L20.5 6.5 L16 4 Q12 6.5 8 4 Z"/><path d="M9.2 14.5 A3.2 3.2 0 1 0 12 11.3"/><path d="M10.4 9.8 L12.2 11.3 L10.6 13"/>',
     'Waschen bis 30 °C': `<path d="${tub}"/>${txt('30')}`,
     'Waschen bis 40 °C': `<path d="${tub}"/>${txt('40')}`,
     'Waschen bis 60 °C': `<path d="${tub}"/>${txt('60')}`,
