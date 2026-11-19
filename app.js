@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.25.2';
+const APP_VERSION = '2.25.3';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
