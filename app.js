@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.26.0';
+const APP_VERSION = '2.27.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -3954,6 +3954,7 @@ function dropTarget() {
   if ($('#cropDlg').open || $('#photoDlg').open) return null; // während der Bildbearbeitung nicht
   if ($('#editor').open) return 'item';
   if ($('#outfitEditor').open) return 'outfit';
+  if ($('#lensDlg').open && [...document.querySelectorAll('dialog[open]')].pop() === $('#lensDlg')) return 'lens';
   if (document.querySelector('dialog[open]')) return null;
   return tab === 'items' || tab === 'wish' ? 'new' : null;
 }
@@ -3963,7 +3964,7 @@ function wireDrop() {
   const show = (on) => {
     const t = on ? dropTarget() : null;
     hint.hidden = !t;
-    if (t) hint.textContent = t === 'outfit' ? 'Bilder hier ablegen – als Fotos vom Outfit' : t === 'new' ? `Bilder hier ablegen – ${tab === 'wish' ? 'neuer Wunsch' : 'neues Teil'} mit diesen Fotos` : 'Bilder hier ablegen – als Fotos dieses Teils';
+    if (t) hint.textContent = t === 'lens' ? 'Bild hier ablegen – ähnliche Teile suchen' : t === 'outfit' ? 'Bilder hier ablegen – als Fotos vom Outfit' : t === 'new' ? `Bilder hier ablegen – ${tab === 'wish' ? 'neuer Wunsch' : 'neues Teil'} mit diesen Fotos` : 'Bilder hier ablegen – als Fotos dieses Teils';
     // Hinweis über dem obersten offenen Dialog anzeigen
     const top = [...document.querySelectorAll('dialog[open]')].pop();
     (top || document.body).append(hint);
@@ -3983,6 +3984,7 @@ function wireDrop() {
     const files = droppedImages(e);
     if (!t) return;
     if (!files.length) return toast('Nur Bilddateien können abgelegt werden.');
+    if (t === 'lens') return lensSetFile(files[0]);
     if (t === 'new') openEditor();
     phCtx = t === 'outfit' ? oed : ed;
     await trackPhoto(addPhotos(files));

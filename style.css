@@ -397,6 +397,7 @@ body { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
 /* Planer & Statistik: Werkzeugleiste ausblenden */
 body[data-tab="plan"] .toolbar, body[data-tab="plan"] #filters,
 body[data-tab="stats"] .toolbar, body[data-tab="stats"] #filters, body[data-tab="stats"] #addBtn, body[data-tab="plan"] #addBtn { display: none !important; }
+body[data-tab="outfits"] #lensBtn, body[data-tab="plan"] #lensBtn, body[data-tab="stats"] #lensBtn { display: none !important; }
 .view { padding: 4px 0 8px; }
 .view h3 { font-size: 15px; margin: 22px 0 8px; }
 .sechead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 22px 0 8px; }
@@ -730,7 +731,7 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 body.filtering main, body.filtering .tabbar, body.filtering #viewChips { display: none !important; }
 body.filtering .appbar .filters { max-height: none; overflow-y: auto; overscroll-behavior: contain; align-content: start; padding-bottom: 96px; }
 body.filtering { overflow: hidden; }
-body.filtering #addBtn { display: none !important; }
+body.filtering #addBtn, body.filtering #lensBtn { display: none !important; }
 .filterbar { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 6; display: flex; gap: 10px; }
 .filterbar > button { padding: 14px; border-radius: 14px; font-size: 16px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
 .filterbar #filterDone { flex: 1; }
@@ -756,3 +757,28 @@ body.filtering #filters [data-reset-filters] { display: none; }
 .careicons { display: inline-flex; flex-wrap: wrap; gap: 6px; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
 .careicons .careicon { width: 28px; height: 30px; flex-basis: 28px; }
 .careterm { cursor: pointer; }
+
+/* Lupe: Suche per Text oder Foto */
+.lensfab {
+  right: 90px; width: 50px; height: 50px; bottom: calc(81px + env(safe-area-inset-bottom));
+  display: grid; place-items: center; background: var(--brand); color: var(--brand-ink);
+}
+.lenstools { display: grid; gap: 8px; padding: 10px 16px 10px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.lenstools input[type=search] { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font-size: 16px; }
+.lenstools .addrow { margin-top: 0; }
+.lenstools .addphoto { padding: 9px; }
+.lensphoto { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.lensq { border: 0; padding: 0; background: none; cursor: pointer; }
+.lensq img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; display: block; background: var(--line); }
+.lensqtext { display: grid; gap: 2px; font-size: 14px; min-width: 0; }
+.lensqtext span { color: var(--muted); font-size: 12px; }
+.lensstatus { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.lensprog { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.lensprog span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.lensstatus.indet .lensprog span { width: 35% !important; animation: lensindet 1.1s ease-in-out infinite; }
+@keyframes lensindet { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.lensmatch { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: transparent; }
+.lensmatch span { display: block; height: 100%; background: var(--accent); opacity: .75; }
+.lensmatch.top span { opacity: 1; }
+#lensEmpty { padding: 32px 8px; }
+#lensEmpty .small { font-size: 13px; }

@@ -1,5 +1,5 @@
 // Service Worker: hält die App offline verfügbar. Bei Änderungen an den Dateien VERSION erhöhen.
-const VERSION = 'ks-2.26.0';
+const VERSION = 'ks-2.27.0';
 // Cross-Origin-Isolation: erlaubt dem Browser, beim Freistellen mehrere Prozessorkerne zu nutzen.
 // GitHub Pages kann diese Header nicht selbst senden, daher setzt sie der Service Worker.
 const COI_HEADERS = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' };
@@ -12,7 +12,9 @@ function withCoi(res) {
 // Bibliothek + KI-Modell zum Freistellen: eigener Cache, bleibt bei App-Updates erhalten
 const ML_CACHE = 'ks-ml-1';
 const ML_HOSTS = ['cdn.jsdelivr.net', 'staticimgly.com'];
-const ASSETS = ['./', './index.html', './kategorien.js', './optionen.js', './app.js', './style.css', './manifest.webmanifest',
+// Modell der Bildsuche (Lupe): speichert transformers.js selbst in diesem Cache – bei Updates nicht löschen
+const KEEP = [ML_CACHE, 'transformers-cache'];
+const ASSETS = ['./', './index.html', './kategorien.js', './optionen.js', './app.js', './lupe.js', './style.css', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -22,7 +24,7 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== ML_CACHE).map((k) => caches.delete(k))))
+    .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && !KEEP.includes(k)).map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
