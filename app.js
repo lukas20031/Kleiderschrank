@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.25.4';
+const APP_VERSION = '2.26.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2492,7 +2492,7 @@ function renderPicker() {
 /** Detailansicht: brechen Waschhinweise um, stehen sie in voller Breite unter dem Label */
 function stackCareList() {
   const list = $('#detailFields .carelist');
-  if (!list) return;
+  if (!list || list.hidden) return;
   const dd = list.closest('dd');
   dd.classList.remove('stack');
   // Umbruch = Text steht nicht mehr neben dem Symbol, das „?“ rutscht in eine neue Zeile oder der Text bricht selbst um
@@ -2550,7 +2550,7 @@ async function openDetail(id) {
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
     ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, f.key === 'preis' && qty(it) > 1 && hasValue(it.preis)
       ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null,
-      f.icon ? `<span class="carelist">${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}<span class="ct">${esc(v)}</span>${PFLEGE_INFO[v]
+      f.icon ? `<button type="button" class="careicons" data-careexpand aria-label="Waschhinweise anzeigen">${fieldValues(it, f.key).map(careIcon).join('')}</button><span class="carelist" hidden>${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}<span class="ct">${esc(v)}</span>${PFLEGE_INFO[v]
         ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(PFLEGE_INFO[v])}</span>` : ''}</span>`).join('')}</span>` : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
@@ -2560,7 +2560,7 @@ async function openDetail(id) {
   requestAnimationFrame(stackCareList);
   setTimeout(stackCareList, 300);
   const artInfo = ART_INFO[it.typ];
-  $('#detailFields').innerHTML = rows.map(([k, v, sw, html]) => `<dt>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${html || esc(v).replace(/\n/g, '<br>')}${k === 'Kategorie' && artInfo
+  $('#detailFields').innerHTML = rows.map(([k, v, sw, html]) => `<dt${k === 'Waschhinweise' ? ' class="careterm" data-careexpand' : ''}>${esc(k)}</dt><dd>${sw?.length ? `<span class="dots">${sw.map(swatch).join('')}</span>` : ''}${html || esc(v).replace(/\n/g, '<br>')}${k === 'Kategorie' && artInfo
     ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was ist ${esc(it.typ)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(artInfo)}</span>` : ''}</dd>`).join('')
     || '<dt>–</dt><dd class="muted">Keine Angaben</dd>';
   const gal = $('#detailPhotos');
@@ -2590,6 +2590,7 @@ async function openDetail(id) {
 }
 
 /* ---------------- Editor ---------------- */
+let reopenItem = null, reopenOutfit = null; // nach dem Bearbeiten wieder öffnen
 let ed = null; // { id, isNew, photos: [{id, isNew, full, thumb}], removed: [] , anlass: Set }
 
 function buildFieldInputs() {
@@ -4168,7 +4169,7 @@ function wireEvents() {
     const c = e.target.closest('.card');
     if (c) openDetail(c.dataset.id);
   });
-  $('#outfitDetailEdit').addEventListener('click', () => { $('#outfitDetail').close(); openOutfitEditor(outfitDetailId); });
+  $('#outfitDetailEdit').addEventListener('click', () => { $('#outfitDetail').close(); openOutfitEditor(outfitDetailId); reopenOutfit = outfitDetailId; });
   $('#outfitAddItems').addEventListener('click', () => openItemPicker());
   $('#oAnlassChips').addEventListener('click', (e) => {
     const a = e.target.dataset.anlass;
@@ -4211,8 +4212,10 @@ function wireEvents() {
     if ($('#outfitDetail').open && outfitDetailId === id) openOutfitDetail(id);
   });
   $('#outfitEditor').addEventListener('close', () => {
+    const back = reopenOutfit; reopenOutfit = null;
     if (oed) for (const p of oed.photos) if (p.isNew) URL.revokeObjectURL(p.url);
     oed = null;
+    if (back && !window.__ksNoReopen && outfits.some((o) => o.id === back) && !document.querySelector('dialog[open]')) openOutfitDetail(back);
   });
   for (const sel of ['#oCameraInput', '#oPhotoInput']) {
     $(sel).addEventListener('change', async (e) => {
@@ -4405,6 +4408,16 @@ function wireEvents() {
   $('#katBtn').addEventListener('click', openKatPicker);
   $('#katSearch').addEventListener('input', renderKatList);
   $('#detailFields').addEventListener('click', (e) => {
+    const ce = e.target.closest('[data-careexpand]');
+    if (ce) {
+      const dd = $('#detailFields .carelist')?.closest('dd');
+      if (!dd) return;
+      const open = dd.querySelector('.carelist').hidden;
+      dd.querySelector('.carelist').hidden = !open;
+      dd.querySelector('.careicons').hidden = open;
+      if (open) stackCareList(); else dd.classList.remove('stack');
+      return;
+    }
     const b = e.target.closest('[data-detailinfo]');
     if (!b) return;
     const ex = b.nextElementSibling;
@@ -4452,7 +4465,8 @@ function wireEvents() {
   });
 
   // Detail
-  $('#detailEdit').addEventListener('click', () => { $('#detail').close(); openEditor(detailId); });
+  // Bearbeiten aus der Detailansicht: nach Speichern/Abbrechen wieder die Detailansicht zeigen
+  $('#detailEdit').addEventListener('click', () => { $('#detail').close(); openEditor(detailId); reopenItem = detailId; });
 
   // Editor
   $('#editForm').addEventListener('submit', async (e) => {
@@ -4468,7 +4482,9 @@ function wireEvents() {
     if (id) detailId = id;
   });
   $('#editor').addEventListener('close', () => {
+    const back = reopenItem; reopenItem = null;
     if (ed) { for (const p of ed.photos) if (p.isNew) URL.revokeObjectURL(p.url); ed = null; }
+    if (back && !window.__ksNoReopen && findItem(back) && !document.querySelector('dialog[open]')) openDetail(back); // __ksNoReopen: nur für ältere Tests
   });
   $('#cameraInput').addEventListener('change', async (e) => {
     const files = [...e.target.files];
