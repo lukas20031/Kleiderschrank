@@ -4,12 +4,17 @@
  *       („Winterjacke“), kleine Tippfehler und einige Synonyme („Pulli“, „navy“, „Sneaker“ …).
  * Foto: Bildmerkmale mit MobileCLIP (läuft komplett auf dem Gerät, Modell wird einmalig geladen)
  *       plus Farbverteilung. Ohne Modell (z. B. offline beim ersten Mal) wird nur nach Farben gesucht.
+ * Text im Bild: Der Suchtext wird auf dem Gerät ins Englische übersetzt (opus-mt-de-en), mit dem Textteil von MobileCLIP
+ *       in Merkmale umgewandelt und mit den Fotos verglichen – so findet „Skorpion“ auch einen Ring mit Skorpion,
+ *       ohne dass das Wort beim Teil steht. Lässt sich im Dialog abschalten.
  * Die Bildmerkmale der eigenen Fotos werden in einer eigenen IndexedDB („kleiderschrank-lupe“) zwischengespeichert;
  * sie werden nicht synchronisiert und bei Bedarf neu berechnet. */
 
 const LENS_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
 const LENS_MODEL = 'Xenova/mobileclip_s0';
 const LENS_KEY = 'mclip_s0'; // Präfix im Zwischenspeicher – bei Modellwechsel ändern
+const LENS_TRANSLATE = 'Xenova/opus-mt-de-en';
+const lensKiOn = () => localStorage.getItem('ks_lensKi') !== '0'; // Text auch im Bildinhalt suchen
 
 /* ---------- Zwischenspeicher für Bildmerkmale ---------- */
 const LensDB = {
@@ -52,18 +57,18 @@ function loadLensVecs() {
 /* ---------- KI-Modell (MobileCLIP, nur der Bildteil) ---------- */
 let lensLib = null;
 let lensProgress = null; // (geladen, gesamt) während des Downloads
+const lensSizes = new Map();
+const progress_callback = (p) => {
+  if (p.status !== 'progress' || !p.total) return;
+  lensSizes.set(`${p.name}/${p.file}`, [p.loaded, p.total]);
+  let l = 0, t = 0;
+  for (const [a, b] of lensSizes.values()) { l += a; t += b; }
+  lensProgress?.(l, t);
+};
 function loadLensModel() {
   lensLib ??= (async () => {
     const T = await import(LENS_LIB);
     T.env.allowLocalModels = false;
-    const sizes = new Map();
-    const progress_callback = (p) => {
-      if (p.status !== 'progress' || !p.total) return;
-      sizes.set(p.file, [p.loaded, p.total]);
-      let l = 0, t = 0;
-      for (const [a, b] of sizes.values()) { l += a; t += b; }
-      lensProgress?.(l, t);
-    };
     const processor = await T.AutoProcessor.from_pretrained(LENS_MODEL, { progress_callback });
     const model = await T.CLIPVisionModelWithProjection.from_pretrained(LENS_MODEL, { device: 'wasm', dtype: 'fp32', progress_callback });
     return { T, processor, model };
@@ -97,6 +102,42 @@ function lensEmbed(src) {
     n = Math.sqrt(n) || 1;
     for (let i = 0; i < v.length; i++) v[i] /= n;
     return v;
+  });
+  lensQueue = job.catch(() => {});
+  return job;
+}
+/** Textteil von MobileCLIP + Übersetzer Deutsch → Englisch (werden erst bei der ersten Textsuche im Bild geladen) */
+let lensTextLib = null;
+function loadLensText() {
+  lensTextLib ??= (async () => {
+    const { T } = await loadLensModel();
+    const tokenizer = await T.AutoTokenizer.from_pretrained(LENS_MODEL, { progress_callback });
+    const textModel = await T.CLIPTextModelWithProjection.from_pretrained(LENS_MODEL, { device: 'wasm', dtype: 'q8', progress_callback });
+    const translator = await T.pipeline('translation', LENS_TRANSLATE, { device: 'wasm', dtype: 'q8', progress_callback });
+    return { tokenizer, textModel, translator };
+  })().catch((e) => { lensTextLib = null; throw e; });
+  return lensTextLib;
+}
+const unit = (v) => { let n = 0; for (const x of v) n += x * x; n = Math.sqrt(n) || 1; for (let i = 0; i < v.length; i++) v[i] /= n; return v; };
+const lensTextCache = new Map(); // Suchtext -> { en, vec }
+/** Suchtext übersetzen und in Bildmerkmale umwandeln */
+function lensTextEmbed(text) {
+  const key = fold(text);
+  if (lensTextCache.has(key)) return Promise.resolve(lensTextCache.get(key));
+  const job = lensQueue.then(async () => {
+    const { tokenizer, textModel, translator } = await loadLensText();
+    let en = text;
+    try {
+      // Einzelne Wörter groß schreiben, damit sie als Substantiv übersetzt werden („skorpion“ → „Skorpion“)
+      const de = /\s/.test(text) ? text : text.charAt(0).toUpperCase() + text.slice(1);
+      const [out] = await translator(de, { max_new_tokens: 40 });
+      en = (out?.translation_text || text).replace(/[.!?]+$/, '').trim() || text;
+    } catch (e) { console.warn('Lupe: Übersetzung fehlgeschlagen', e); }
+    const inputs = tokenizer([`a photo of ${en}`], { padding: 'max_length', truncation: true });
+    const { text_embeds } = await textModel(inputs);
+    const res = { en, vec: unit(Float32Array.from(text_embeds.data)) };
+    lensTextCache.set(key, res);
+    return res;
   });
   lensQueue = job.catch(() => {});
   return job;
@@ -182,15 +223,21 @@ const LENS_FIELDS = [
   ['groesse', 0.6], ['passform', 0.45], ['herkunft', 0.5], ['lagerort', 0.5], ['zustand', 0.4], ['pflege', 0.3],
   ['anlass', 0.6], ['jahreszeit', 0.6], ['notiz', 0.5], ['status', 0.5], ['_tags', 0.5], ['_waesche', 0.5],
 ];
+// Gewicht je Farbrolle: Teile, bei denen die gesuchte Farbe Hauptfarbe ist, kommen zuerst
+const LENS_ROLLE_W = { Hauptfarbe: 1, Nebenfarbe: 0.75, Akzentfarbe: 0.55, '': 0.85 };
 function lensDoc(it) {
-  return LENS_FIELDS.map(([key, w]) => {
-    let vals;
-    if (key === '_tags') vals = Object.values(it.photoTags || {}).flat();
-    else if (key === '_waesche') vals = washN(it) ? ['Wäsche'] : [];
-    else if (FIELD[key]) vals = ['price', 'date', 'url', 'count'].includes(FIELD[key].type) ? [] : fieldValues(it, key);
-    else vals = asList(it[key]);
-    return [w, lensWords(vals.join(' '))];
+  return LENS_FIELDS.flatMap(([key, w]) => {
+    if (key === 'farben') return fieldValues(it, 'farben').map((c) => [w * LENS_ROLLE_W[farbRolle(it, c)], lensWords(c)]);
+    return [lensDocField(it, key, w)];
   }).filter(([, ws]) => ws.length);
+}
+function lensDocField(it, key, w) {
+  let vals;
+  if (key === '_tags') vals = Object.values(it.photoTags || {}).flat();
+  else if (key === '_waesche') vals = washN(it) ? ['Wäsche'] : [];
+  else if (FIELD[key]) vals = ['price', 'date', 'url', 'count'].includes(FIELD[key].type) ? [] : fieldValues(it, key);
+  else vals = asList(it[key]);
+  return [w, lensWords(vals.join(' '))];
 }
 function levenshtein(a, b, max) {
   if (Math.abs(a.length - b.length) > max) return max + 1;
@@ -342,7 +389,12 @@ async function lensSearch() {
   Lens.info = '';
   if (!text && !ph) { lensStatus(''); return lensShow([], 'start'); }
   const textScores = text ? lensTextScores(text, pool) : null;
-  if (!ph) { lensStatus(''); return lensShow(lensRank(pool, textScores, null), 'text'); }
+  if (!ph) {
+    lensStatus('');
+    lensShow(lensRank(pool, textScores, null), 'text');
+    if (lensKiOn() && fold(text).replace(/[^a-z0-9]/g, '').length >= 3) await lensTextVisual(run, text, pool, textScores);
+    return;
+  }
 
   // Foto: zuerst das Suchfoto selbst analysieren
   ph.hist ??= colorHist(ph.canvas, ph.transparent);
@@ -374,6 +426,74 @@ async function lensSearch() {
     lensShow(lensRank(pool, textScores, useVec ? ph : { ...ph, vec: null }), 'photo');
   }
   if (run === Lens.run) lensStatus('');
+}
+
+/** Text zusätzlich im Bildinhalt suchen (nach kurzer Tipp-Pause) */
+async function lensTextVisual(run, text, pool, textScores) {
+  await sleep(450);
+  if (run !== Lens.run) return;
+  let q;
+  try {
+    lensProgress = (l, t) => { if (run === Lens.run) lensStatus(`KI-Modelle werden geladen (einmalig) … ${Math.round(l / 1e6)} / ${Math.round(t / 1e6)} MB`, l / t); };
+    lensStatus('Suche im Bildinhalt wird vorbereitet …');
+    await loadLensModel();
+    await loadLensText();
+    lensProgress = null;
+    if (run !== Lens.run) return;
+    lensStatus('Suchtext wird übersetzt …');
+    q = await lensTextEmbed(text);
+  } catch (e) {
+    console.warn('Lupe: Suche im Bildinhalt nicht verfügbar', e);
+    lensProgress = null;
+    if (run !== Lens.run) return;
+    Lens.info = navigator.onLine ? 'Suche im Bildinhalt nicht verfügbar.' : 'Offline: Die Suche im Bildinhalt braucht beim ersten Mal Netz.';
+    lensStatus('');
+    return lensShow(lensRank(pool, textScores, null), 'text');
+  }
+  if (run !== Lens.run) return;
+  await loadLensVecs();
+  const first = pool.map((it) => (it.photos || [])[0]).filter(Boolean);
+  const rest = pool.flatMap((it) => (it.photos || []).slice(1));
+  const show = () => {
+    Lens.info = q.en && fold(q.en) !== fold(text) ? `im Bild gesucht: „${q.en}“` : '';
+    lensShow(lensRankVisual(pool, textScores, q.vec), 'text');
+  };
+  if (!await lensIndex(first, run, true)) return;
+  show();
+  if (rest.some((pid) => !lensVecs.has(pid))) {
+    if (!await lensIndex(rest, run, true)) return;
+    show();
+  }
+  if (run === Lens.run) lensStatus('');
+}
+/** Text-Treffer (Angaben) mit Treffern im Bildinhalt zusammenführen.
+ *  Die Text-Bild-Werte liegen eng beieinander – deshalb zählt, wie weit ein Teil über dem Durchschnitt liegt. */
+function lensRankVisual(pool, textScores, qVec) {
+  const sims = [];
+  for (const it of pool) {
+    let v = -Infinity;
+    for (const pid of it.photos || []) { const e = lensVecs.get(pid); if (e) v = Math.max(v, dotp(qVec, e)); }
+    if (v > -Infinity) sims.push([it, v]);
+  }
+  const vis = new Map();
+  if (sims.length >= 3) {
+    const mean = sims.reduce((a, [, v]) => a + v, 0) / sims.length;
+    const sd = Math.sqrt(sims.reduce((a, [, v]) => a + (v - mean) ** 2, 0) / sims.length) || 1;
+    const best = Math.max(...sims.map(([, v]) => v));
+    for (const [it, v] of sims) {
+      const z = (v - mean) / sd;
+      // nur deutliche Ausreißer nach oben, und nicht weit hinter dem besten Treffer
+      const w = Math.max(0, Math.min(1, (z - 1.2) / 2)) * (v >= best - 0.04 ? 1 : 0.4);
+      if (w > 0) vis.set(it.id, w);
+    }
+  }
+  const out = [];
+  for (const it of pool) {
+    const t = textScores.get(it.id) || 0, v = vis.get(it.id) || 0;
+    const score = t + 0.55 * v;
+    if (score >= 0.25) out.push({ it, score, rel: Math.min(1, score), ki: v > 0.15 && t < 0.3 });
+  }
+  return out.sort((a, b) => b.score - a.score || !!b.it.favorit - !!a.it.favorit).slice(0, 80);
 }
 
 /** Rangliste: [{ it, score, rel }] – rel (0–1) steuert den Balken auf der Karte */
@@ -422,7 +542,7 @@ function lensShow(list, mode) {
     $('#lensCount').textContent = '';
     empty.hidden = false;
     empty.innerHTML = `<p>Was suchst du?</p><p class="muted">Beschreibe das ${what[0]}, z. B. <b>„schwarze Lederjacke“</b>, <b>„Pulli Wolle Winter“</b> oder eine Marke – oder mach ein Foto davon. Die besten Treffer stehen oben.</p>
-      <p class="muted small">Die Bilderkennung läuft auf deinem Gerät. Beim ersten Foto wird dafür einmalig ein KI-Modell geladen.</p>`;
+      <p class="muted small">Mit ✨ sucht die App deinen Text auch in den Fotos selbst – „Skorpion“ findet so z. B. einen Ring mit Skorpion, auch wenn das Wort nirgends steht. Die KI läuft auf deinem Gerät; beim ersten Mal werden die Modelle einmalig geladen.</p>`;
     return;
   }
   empty.hidden = list.length > 0;
@@ -430,8 +550,8 @@ function lensShow(list, mode) {
     ? `<p>Nichts Passendes gefunden.</p><p class="muted">Versuche es mit anderen oder weniger Wörtern.</p>`
     : `<p>Noch keine ${what[1]} vorhanden.</p>`;
   $('#lensCount').textContent = [list.length ? `${list.length} ${list.length === 1 ? 'Treffer' : 'Treffer'}, beste zuerst` : '', Lens.info].filter(Boolean).join(' · ');
-  grid.innerHTML = list.map(({ it, rel }, i) => itemCardHtml(it).replace(/<\/button>\s*$/,
-    `<span class="lensmatch${i === 0 ? ' top' : ''}" title="Übereinstimmung"><span style="width:${Math.round(15 + 85 * rel)}%"></span></span></button>`)).join('');
+  grid.innerHTML = list.map(({ it, rel, ki }, i) => itemCardHtml(it).replace(/<\/button>\s*$/,
+    `${ki ? '<span class="lensai" title="Im Foto erkannt">✨ im Bild</span>' : ''}<span class="lensmatch${i === 0 ? ' top' : ''}" title="Übereinstimmung"><span style="width:${Math.round(15 + 85 * rel)}%"></span></span></button>`)).join('');
 }
 
 function wireLens() {
@@ -442,6 +562,8 @@ function wireLens() {
     $(id).addEventListener('change', (e) => { const f = e.target.files?.[0]; e.target.value = ''; lensSetFile(f); });
   }
   $('#lensClear').addEventListener('click', lensClearPhoto);
+  $('#lensKi').checked = lensKiOn();
+  $('#lensKi').addEventListener('change', (e) => { localStorage.setItem('ks_lensKi', e.target.checked ? '1' : '0'); lensSearch(); });
   $('#lensRecrop').addEventListener('click', () => { if (Lens.photo) lensCrop(Lens.photo.orig); });
   $('#lensGrid').addEventListener('click', (e) => {
     const card = e.target.closest('.card');

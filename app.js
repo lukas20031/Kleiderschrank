@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.27.0';
+const APP_VERSION = '2.29.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -69,6 +69,10 @@ const fieldText = (it, key) => {
   if (t === 'price') return formatPrice(it[key]);
   if (t === 'date') return formatDate(it[key]);
   if (key === 'materialien') return materialList(it).map(([m, p]) => p ? `${m} ${p} %` : m).join(', ');
+  if (key === 'farben') {
+    const fs = farbList(it);
+    return fs.map((c) => (fs.length > 1 && farbRolle(it, c) ? `${c} (${farbRolle(it, c)})` : c)).join(', ');
+  }
   return fieldValues(it, key).join(', ');
 };
 /** Materialien mit Anteil in Prozent (falls angegeben), größter Anteil zuerst */
@@ -76,6 +80,20 @@ function materialList(it) {
   const ant = it.materialAnteile || {};
   return fieldValues(it, 'materialien').map((m, i) => [m, Number(ant[m]) || 0, i]).sort((a, b) => b[1] - a[1] || a[2] - b[2]).map(([m, p]) => [m, p]);
 }
+/* Farbrollen: bei mehreren Farben optional Haupt-, Neben- oder Akzentfarbe (gespeichert in farbRollen: { Farbe: Rolle }) */
+const FARB_ROLLEN = ['Hauptfarbe', 'Nebenfarbe', 'Akzentfarbe'];
+const FARB_ROLLE_KURZ = { Hauptfarbe: 'Haupt', Nebenfarbe: 'Neben', Akzentfarbe: 'Akzent' };
+/** Rolle einer Farbe; eine einzelne Farbe ist immer die Hauptfarbe, ohne Angabe '' */
+function farbRolle(it, c) {
+  const fs = fieldValues(it, 'farben');
+  if (fs.length === 1) return fs[0] === c ? 'Hauptfarbe' : '';
+  const r = (it.farbRollen || {})[c];
+  return FARB_ROLLEN.includes(r) ? r : '';
+}
+/** 0 = Hauptfarbe … 2 = Akzent; ohne Angabe zwischen Neben- und Akzentfarbe einsortiert */
+const farbRang = (it, c) => { const r = farbRolle(it, c); return r ? FARB_ROLLEN.indexOf(r) : 1.5; };
+/** Farben eines Teils, Hauptfarbe zuerst */
+const farbList = (it) => fieldValues(it, 'farben').map((c, i) => [c, farbRang(it, c), i]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(([c]) => c);
 const swatch = (name) => `<span class="sw" style="background:${FARB_MAP.get(name) || '#ccc'}"></span>`;
 const DATA_VERSION = 9;
 /* Umbau der Shirts (Version 3/4): „T-Shirts“ heißt jetzt „Kurzarmshirts“, Langarm-Shirts haben eine eigene
@@ -1681,7 +1699,9 @@ function detectColors(canvas, transparent) {
   const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
   const out = [ranked[0][0]];
   if (ranked[1] && ranked[1][1] / total >= 0.3) out.push(ranked[1][0]);
-  return FIELD.farben.all.filter((o) => out.includes(o)); // feste Reihenfolge
+  const res = FIELD.farben.all.filter((o) => out.includes(o)); // feste Reihenfolge
+  res.ranked = out; // nach Häufigkeit
+  return res;
 }
 
 /** Fotos nacheinander im Editor öffnen und übernehmen */
@@ -1706,7 +1726,11 @@ async function addPhotos(files) {
       // Farbe vorschlagen, solange noch keine gewählt ist (nur beim ersten Foto eines Teils = Titelbild)
       if (c === ed && ed.photos.length === 1 && !ed.vals.farben.length) {
         const found = detectColors(canvas, transparent);
-        if (found.length) { ed.vals.farben = found; ed.autoColor = true; renderPickFields(); }
+        if (found.length) {
+          ed.vals.farben = found; ed.autoColor = true;
+          ed.farbRollen = found.length > 1 ? { [found.ranked[0]]: 'Hauptfarbe', [found.ranked[1]]: 'Nebenfarbe' } : {};
+          renderPickFields();
+        }
       }
       renderPhotoStrip();
     } catch (e) {
@@ -2058,7 +2082,10 @@ function filterItems(query, fState, sort = 'new', pool = items) {
     if (!matchFilters(it, fState)) return false;
     if (!terms.length) return true;
     const hay = [it.name, it.notiz, it.status, washN(it) ? 'Wäsche' : '', it.kategorie, it.unterkategorie, it.typ, ...(it.anlass || []), ...(it.jahreszeit || []), ...FIELDS.map((f) => fieldText(it, f.key))].join(' ').toLowerCase();
-    return terms.every((t) => hay.includes(t));
+    if (terms.every((t) => hay.includes(t))) return true;
+    // Wortformen („schwarze“, „Jacken“) über den Wortstamm finden
+    const hayF = fold(hay);
+    return terms.every((t) => hay.includes(t) || hayF.includes(stem(fold(t))));
   });
   const cmp = (a, b, k) => (k === 'name' ? 0 : String(a[k] || '').localeCompare(String(b[k] || ''), 'de')) || itemTitle(a).localeCompare(itemTitle(b), 'de');
   if (sort === 'new') list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -2072,6 +2099,18 @@ function filterItems(query, fState, sort = 'new', pool = items) {
   else if (sort === 'cpw_asc') list.sort((a, b) => byPrice(costPerWear(a), costPerWear(b), 'price_asc') || cmp(a, b, 'name'));
   else if (sort === 'price_desc' || sort === 'price_asc') list.sort((a, b) => byPrice(itemPrice(a), itemPrice(b), sort) || cmp(a, b, 'name'));
   else list.sort((a, b) => cmp(a, b, sort));
+  // Wird nach einer Farbe gesucht oder gefiltert, kommen Teile mit dieser Farbe als Hauptfarbe zuerst
+  // (innerhalb gleicher Rolle bleibt die gewählte Sortierung)
+  const wanted = new Set(asList(fState.farben));
+  for (const t of terms) {
+    const st = stem(fold(t));
+    if (st.length < 3) continue;
+    for (const c of FIELD.farben.all) { const fc = fold(c); if (fc === fold(t) || stem(fc) === st || (st.length >= 4 && fc.startsWith(st))) wanted.add(c); }
+  }
+  if (wanted.size) {
+    const rank = (it) => Math.min(3, ...fieldValues(it, 'farben').filter((c) => wanted.has(c)).map((c) => farbRang(it, c)));
+    list = list.map((it, i) => [it, rank(it), i]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(([it]) => it);
+  }
   return list;
 }
 const itemPrice = (it) => (hasValue(it.preis) ? Number(it.preis) : null);
@@ -2153,7 +2192,7 @@ function itemCardHtml(it, { selected = null } = {}) {
   const url = pid ? thumbUrl(pid) : '';
   // Ohne Bezeichnung steht die Kategorie schon im Titel – dann Marke statt Kategorie zeigen
   const sub = [it.name ? (it.typ || it.unterkategorie || it.kategorie) : it.marke, it.groesse, it.wunsch ? formatPrice(it.preis) : ''].filter(Boolean).join(' · ');
-  const farben = fieldValues(it, 'farben');
+  const farben = farbList(it);
   const n = (it.photos || []).length;
   const flags = [qty(it) > 1 ? `${qty(it)}×` : '', n > 1 && selected === null ? `${n} Fotos` : '', washN(it) ? washLabel(it) : '', it.status || ''].filter(Boolean);
   return `<button type="button" class="card${selected ? ' selected' : ''}${selected !== null && (washAll(it) || it.status) ? ' dim' : ''}" data-id="${esc(it.id)}">
@@ -2549,7 +2588,7 @@ async function openDetail(id) {
     ['Status', it.status || ''],
     ['Kategorie', catPath(it) || (it.kategorieAlt ? `nicht zugeordnet (bisher: ${it.kategorieAlt})` : '')],
     ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, f.key === 'preis' && qty(it) > 1 && hasValue(it.preis)
-      ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? fieldValues(it, f.key) : null,
+      ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? farbList(it) : null,
       f.icon ? `<button type="button" class="careicons" data-careexpand aria-label="Waschhinweise anzeigen">${fieldValues(it, f.key).map(careIcon).join('')}</button><span class="carelist" hidden>${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}<span class="ct">${esc(v)}</span>${PFLEGE_INFO[v]
         ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(PFLEGE_INFO[v])}</span>` : ''}</span>`).join('')}</span>` : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
@@ -2616,7 +2655,7 @@ function buildFieldInputs() {
       return `<div class="${cls}">${esc(f.label)}<div class="chips" id="chips-${f.key}"></div>${alt}</div>`;
     }
     const auto = f.key === 'farben' ? '<span class="hint autohint" id="auto-farben" hidden>✨ Automatisch erkannt – tippe zum Ändern</span>' : '';
-    const shares = f.key === 'materialien' ? '<div class="anteile" id="anteile" hidden></div>' : '';
+    const shares = f.key === 'materialien' ? '<div class="anteile" id="anteile" hidden></div>' : f.key === 'farben' ? '<div class="anteile" id="farbRollen" hidden></div>' : '';
     return `<div class="${cls}">${esc(f.label)}<button type="button" class="katbtn pickbtn" data-pick="${f.key}"></button>${auto}${shares}${alt}</div>`;
   });
   $('#fieldGrid').innerHTML = html.filter((_, i) => !FIELDS[i].slot).join('');
@@ -2654,7 +2693,8 @@ function renderPickFields() {
         `<button type="button" class="chipbtn${ed.vals[f.key] === o ? ' active' : ''}" data-chip="${f.key}" data-val="${esc(o)}">${esc(o)}</button>`).join('');
       continue;
     }
-    const vals = f.type === 'multi' ? ed.vals[f.key] : (ed.vals[f.key] ? [ed.vals[f.key]] : []);
+    let vals = f.type === 'multi' ? ed.vals[f.key] : (ed.vals[f.key] ? [ed.vals[f.key]] : []);
+    if (f.key === 'farben') vals = farbList({ farben: vals, farbRollen: ed.farbRollen });
     const btn = $(`[data-pick="${f.key}"]`);
     btn.classList.toggle('empty', !vals.length);
     btn.innerHTML = `<span class="picked">${vals.length
@@ -2662,6 +2702,17 @@ function renderPickFields() {
       : `${esc(f.label)} wählen`}</span><span aria-hidden="true">›</span>`;
   }
   renderAnteile();
+  renderFarbRollen();
+}
+/** Editor: bei mehreren Farben Haupt-/Neben-/Akzentfarbe wählen (erneut tippen = abwählen) */
+function renderFarbRollen() {
+  const box = $('#farbRollen');
+  const fs = ed.vals.farben || [];
+  box.hidden = fs.length < 2;
+  if (fs.length < 2) return;
+  box.innerHTML = fs.map((c) => `<div class="anteil rolle"><span>${swatch(c)} ${esc(c)}</span><span class="rollen">${FARB_ROLLEN.map((r) =>
+    `<button type="button" class="chipbtn${ed.farbRollen[c] === r ? ' active' : ''}" data-rolle="${esc(c)}" data-val="${r}">${FARB_ROLLE_KURZ[r]}</button>`).join('')}</span></div>`).join('')
+    + '<p class="hint">Optional: Was überwiegt? Bei der Suche nach einer Farbe kommen Teile, bei denen sie Hauptfarbe ist, zuerst.</p>';
 }
 /** Editor: Anteile in Prozent je gewähltem Material */
 function renderAnteile() {
@@ -2862,6 +2913,7 @@ function openEditor(id = null, copyId = null) {
     vals: Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])),
     alt: { ...(it?.alt || {}) },
     anteile: { ...(it?.materialAnteile || {}) },
+    farbRollen: { ...(it?.farbRollen || {}) },
     passt: orig ? matchesOf(orig.id) : [...(it?.passtZu || [])],
     passtBefore: orig ? matchesOf(orig.id) : [],
     katAlt: it?.kategorieAlt || '',
@@ -2923,6 +2975,8 @@ async function saveEditor() {
   await saveMatches(it, ed.passtBefore);
   const ant = (it.materialien || []).length < 2 ? {} : Object.fromEntries((it.materialien || []).map((m) => [m, Math.round(Number(ed.anteile[m]))]).filter(([, p]) => p > 0 && p <= 100));
   if (Object.keys(ant).length) it.materialAnteile = ant; else delete it.materialAnteile;
+  const fr = (it.farben || []).length < 2 ? {} : Object.fromEntries(it.farben.filter((c) => FARB_ROLLEN.includes(ed.farbRollen[c])).map((c) => [c, ed.farbRollen[c]]));
+  if (Object.keys(fr).length) it.farbRollen = fr; else delete it.farbRollen;
   it.v = DATA_VERSION;
   Object.assign(it, ed.kat);
   if (it.kategorie) delete it.kategorieAlt;
@@ -4398,6 +4452,14 @@ function wireEvents() {
     if (FIELD[optKey].type === 'multi') renderOptions(); else $('#optDlg').close();
   });
   $('#optDlg').addEventListener('close', () => { if (ed) renderPickFields(); });
+  onFields('click', (e) => {
+    const b = e.target.closest('[data-rolle]');
+    if (!b || !ed) return;
+    const c = b.dataset.rolle;
+    if (ed.farbRollen[c] === b.dataset.val) delete ed.farbRollen[c]; else ed.farbRollen[c] = b.dataset.val;
+    ed.autoColor = false;
+    renderPickFields();
+  });
   onFields('input', (e) => {
     const m = e.target.dataset?.anteil;
     if (m === undefined || !ed) return;

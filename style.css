@@ -782,3 +782,12 @@ body.filtering #filters [data-reset-filters] { display: none; }
 .lensmatch.top span { opacity: 1; }
 #lensEmpty { padding: 32px 8px; }
 #lensEmpty .small { font-size: 13px; }
+
+/* Farbrollen im Editor */
+.anteil.rolle > span:first-child { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.anteil.rolle .sw { flex: 0 0 auto; }
+.rollen { display: flex; gap: 4px; flex: 0 0 auto; }
+.rollen .chipbtn { padding: 4px 9px; font-size: 13px; }
+.lenski { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
+.lenski input { margin: 2px 0 0; }
+.card .lensai { position: absolute; top: 8px; right: 8px; font-size: 11px; background: var(--brand); color: var(--brand-ink); padding: 1px 7px; border-radius: 999px; }
