@@ -119,23 +119,54 @@ function loadLensText() {
   return lensTextLib;
 }
 const unit = (v) => { let n = 0; for (const x of v) n += x * x; n = Math.sqrt(n) || 1; for (let i = 0; i < v.length; i++) v[i] /= n; return v; };
-const lensTextCache = new Map(); // Suchtext -> { en, vec }
-/** Suchtext übersetzen und in Bildmerkmale umwandeln */
+const lensTextCache = new Map(); // Suchtext -> { en, vec, base }
+const lensWordCache = new Map(); // deutsches Wort -> englisches Wort
+let lensBaseVec = null;          // Vergleichswert „irgendein Kleidungsstück“
+/** Ist die Übersetzung eines einzelnen Worts plausibel? (das kleine Modell erzeugt sonst z. B. „Sw's Sw's's sister“) */
+function plausibleWord(src, out) {
+  if (!out) return false;
+  if (!/^[a-z][a-z -]*$/i.test(out)) return false;                 // nur Buchstaben, Leerzeichen, Bindestrich
+  const ws = out.toLowerCase().split(/[\s-]+/).filter(Boolean);
+  if (ws.length > 3 || new Set(ws).size < ws.length) return false; // zu lang oder Wiederholungen
+  return out.length <= src.length * 2.5 + 6;
+}
+/** Ein Wort übersetzen (Groß- und Kleinschreibung probieren); unplausibel → Wort unverändert lassen */
+async function translateWord(translator, w) {
+  const key = fold(w);
+  if (lensWordCache.has(key)) return lensWordCache.get(key);
+  let en = w;
+  if (w.length >= 3 && !/\d/.test(w)) {
+    const cap = w.charAt(0).toUpperCase() + w.slice(1);
+    for (const cand of [...new Set([cap, w.toLowerCase()])]) {
+      try {
+        const [out] = await translator(cand, { max_new_tokens: 8 });
+        const t = String(out?.translation_text || '').replace(/[.!?,;:"„“”']+/g, ' ').replace(/\s+/g, ' ').trim();
+        if (plausibleWord(w, t)) { en = t.toLowerCase(); break; }
+      } catch (e) { console.warn('Lupe: Übersetzung fehlgeschlagen', e); break; }
+    }
+  }
+  lensWordCache.set(key, en);
+  return en;
+}
+async function embedText(tokenizer, textModel, phrase) {
+  const inputs = tokenizer([phrase], { padding: 'max_length', truncation: true });
+  const { text_embeds } = await textModel(inputs);
+  return unit(Float32Array.from(text_embeds.data));
+}
+/** Suchtext Wort für Wort übersetzen und in Bildmerkmale umwandeln.
+ *  Wortweise, weil Suchanfragen meist Stichwörter sind (oft gemischt, z. B. „Sweater Schlange“) –
+ *  ganze Stichwort-Ketten bringen das kleine Übersetzungsmodell durcheinander. */
 function lensTextEmbed(text) {
   const key = fold(text);
   if (lensTextCache.has(key)) return Promise.resolve(lensTextCache.get(key));
   const job = lensQueue.then(async () => {
     const { tokenizer, textModel, translator } = await loadLensText();
-    let en = text;
-    try {
-      // Einzelne Wörter groß schreiben, damit sie als Substantiv übersetzt werden („skorpion“ → „Skorpion“)
-      const de = /\s/.test(text) ? text : text.charAt(0).toUpperCase() + text.slice(1);
-      const [out] = await translator(de, { max_new_tokens: 40 });
-      en = (out?.translation_text || text).replace(/[.!?]+$/, '').trim() || text;
-    } catch (e) { console.warn('Lupe: Übersetzung fehlgeschlagen', e); }
-    const inputs = tokenizer([`a photo of ${en}`], { padding: 'max_length', truncation: true });
-    const { text_embeds } = await textModel(inputs);
-    const res = { en, vec: unit(Float32Array.from(text_embeds.data)) };
+    const words = text.split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter((w) => w && !LENS_STOP.has(fold(w)));
+    const en = [];
+    for (const w of words.length ? words : [text]) en.push(await translateWord(translator, w));
+    const phrase = en.join(' ');
+    lensBaseVec ??= await embedText(tokenizer, textModel, 'a photo of a piece of clothing or an accessory');
+    const res = { en: phrase, vec: await embedText(tokenizer, textModel, `a photo of ${phrase}`), base: lensBaseVec };
     lensTextCache.set(key, res);
     return res;
   });
@@ -456,7 +487,7 @@ async function lensTextVisual(run, text, pool, textScores) {
   const rest = pool.flatMap((it) => (it.photos || []).slice(1));
   const show = () => {
     Lens.info = q.en && fold(q.en) !== fold(text) ? `im Bild gesucht: „${q.en}“` : '';
-    lensShow(lensRankVisual(pool, textScores, q.vec), 'text');
+    lensShow(lensRankVisual(pool, textScores, q), 'text');
   };
   if (!await lensIndex(first, run, true)) return;
   show();
@@ -468,11 +499,13 @@ async function lensTextVisual(run, text, pool, textScores) {
 }
 /** Text-Treffer (Angaben) mit Treffern im Bildinhalt zusammenführen.
  *  Die Text-Bild-Werte liegen eng beieinander – deshalb zählt, wie weit ein Teil über dem Durchschnitt liegt. */
-function lensRankVisual(pool, textScores, qVec) {
+function lensRankVisual(pool, textScores, q) {
+  // Je Foto: Ähnlichkeit zum Suchtext minus Ähnlichkeit zu „irgendein Kleidungsstück“ –
+  // so fallen Fotos, die zu allem ein bisschen passen, nicht mehr als Treffer auf
   const sims = [];
   for (const it of pool) {
     let v = -Infinity;
-    for (const pid of it.photos || []) { const e = lensVecs.get(pid); if (e) v = Math.max(v, dotp(qVec, e)); }
+    for (const pid of it.photos || []) { const e = lensVecs.get(pid); if (e) v = Math.max(v, dotp(q.vec, e) - dotp(q.base, e)); }
     if (v > -Infinity) sims.push([it, v]);
   }
   const vis = new Map();
@@ -483,7 +516,7 @@ function lensRankVisual(pool, textScores, qVec) {
     for (const [it, v] of sims) {
       const z = (v - mean) / sd;
       // nur deutliche Ausreißer nach oben, und nicht weit hinter dem besten Treffer
-      const w = Math.max(0, Math.min(1, (z - 1.2) / 2)) * (v >= best - 0.04 ? 1 : 0.4);
+      const w = v > 0.01 ? Math.max(0, Math.min(1, (z - 1.2) / 2)) * (v >= best - 0.04 ? 1 : 0.4) : 0;
       if (w > 0) vis.set(it.id, w);
     }
   }
