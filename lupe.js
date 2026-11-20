@@ -123,27 +123,33 @@ const lensTextCache = new Map(); // Suchtext -> { en, vec, base }
 const lensWordCache = new Map(); // deutsches Wort -> englisches Wort
 let lensBaseVec = null;          // Vergleichswert „irgendein Kleidungsstück“
 /** Ist die Übersetzung eines einzelnen Worts plausibel? (das kleine Modell erzeugt sonst z. B. „Sw's Sw's's sister“) */
+const EN_STOP = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'to', 'in', 'on', 'it', 'is', 'be', 'that', 'this', 'with', 'for', 'at', 'by', 'as', 'from', 'i', 'you', 'he', 'she', 'we', 'they', 'not', 'no', 'yes']);
 function plausibleWord(src, out) {
   if (!out) return false;
+  if (out.replace(/[^a-z]/gi, '').length < 3) return false;          // „the“-artige Kurzwörter
+  if (out.toLowerCase().split(/[\s-]+/).every((w) => EN_STOP.has(w))) return false;
   if (!/^[a-z][a-z -]*$/i.test(out)) return false;                 // nur Buchstaben, Leerzeichen, Bindestrich
   const ws = out.toLowerCase().split(/[\s-]+/).filter(Boolean);
   if (ws.length > 3 || new Set(ws).size < ws.length) return false; // zu lang oder Wiederholungen
   return out.length <= src.length * 2.5 + 6;
 }
 /** Ein Wort übersetzen (Groß- und Kleinschreibung probieren); unplausibel → Wort unverändert lassen */
-async function translateWord(translator, w) {
+async function translateWord(translator, w, viaSyn = true) {
   const key = fold(w);
   if (lensWordCache.has(key)) return lensWordCache.get(key);
-  let en = w;
+  let en = w, ok = false;
   if (w.length >= 3 && !/\d/.test(w)) {
     const cap = w.charAt(0).toUpperCase() + w.slice(1);
     for (const cand of [...new Set([cap, w.toLowerCase()])]) {
       try {
         const [out] = await translator(cand, { max_new_tokens: 8 });
         const t = String(out?.translation_text || '').replace(/[.!?,;:"„“”']+/g, ' ').replace(/\s+/g, ' ').trim();
-        if (plausibleWord(w, t)) { en = t.toLowerCase(); break; }
+        if (plausibleWord(w, t)) { en = t.toLowerCase(); ok = true; break; }
       } catch (e) { console.warn('Lupe: Übersetzung fehlgeschlagen', e); break; }
     }
+    // Kennt das Modell das Wort nicht (z. B. „Pulli“), das gleichbedeutende Wort aus den Synonymen übersetzen
+    const syn = (LENS_SYN[key] || [])[0];
+    if (!ok && viaSyn && syn && fold(syn) !== key) en = await translateWord(translator, syn, false);
   }
   lensWordCache.set(key, en);
   return en;
@@ -163,10 +169,16 @@ function lensTextEmbed(text) {
     const { tokenizer, textModel, translator } = await loadLensText();
     const words = text.split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter((w) => w && !LENS_STOP.has(fold(w)));
     const en = [];
-    for (const w of words.length ? words : [text]) en.push(await translateWord(translator, w));
+    const perWord = new Map(); // gefaltetes Wort (wie in lensTerms) -> Merkmale
+    for (const w of words.length ? words : [text]) {
+      const e = await translateWord(translator, w);
+      en.push(e);
+      const k = fold(w).replace(/[^a-z0-9]+/g, '');
+      if (k && !perWord.has(k)) perWord.set(k, await embedText(tokenizer, textModel, `a photo of ${e}`));
+    }
     const phrase = en.join(' ');
     lensBaseVec ??= await embedText(tokenizer, textModel, 'a photo of a piece of clothing or an accessory');
-    const res = { en: phrase, vec: await embedText(tokenizer, textModel, `a photo of ${phrase}`), base: lensBaseVec };
+    const res = { en: phrase, vec: await embedText(tokenizer, textModel, `a photo of ${phrase}`), base: lensBaseVec, perWord };
     lensTextCache.set(key, res);
     return res;
   });
@@ -299,9 +311,11 @@ function wordMatch(q, w, strict = false) {
   }
   return 0;
 }
-/** Suchbegriffe: jedes Wort mit seinen Alternativen [[stamm, gewicht, nurGanzeWörter], …] */
+/** Suchbegriffe: jedes Wort mit seinen Alternativen [[stamm, gewicht, nurGanzeWörter], …];
+ *  terms.keys enthält je Wort den gefalteten Text (für die Bildtreffer je Wort) */
 function lensTerms(text) {
   const terms = [];
+  terms.keys = [];
   for (const raw of fold(text).split(/\s+/)) {
     const parts = raw.split(/[^a-z0-9]+/).filter(Boolean);
     if (!parts.length) continue;
@@ -311,29 +325,36 @@ function lensTerms(text) {
     if (parts.length > 1) for (const p of parts) if (p.length >= 3) alts.push([stem(p), 0.8]);
     for (const s of LENS_SYN[joined] || []) for (const w of lensWords(s)) alts.push([w, 0.9, true]);
     terms.push(alts);
+    terms.keys.push(joined);
   }
   return terms;
 }
-/** Text-Treffer: Map id -> Wert (0–1) */
-function lensTextScores(text, pool) {
+/** Text-Treffer: Map id -> Wert (0–1).
+ *  visByWord (optional): Map gefaltetes Wort -> Map id -> Bildtreffer (0–1). Je Suchwort zählt dann der bessere Wert
+ *  aus Angaben und Bild – so gewinnt bei „Sweater Schlange“ der Sweater mit Schlange (beide Wörter erfüllt)
+ *  vor Schmuck mit Schlange (nur ein Wort). out.ki: Teile, die ein Wort nur über das Bild erfüllen. */
+function lensTextScores(text, pool, visByWord = null, minScore = 0.25) {
   const terms = lensTerms(text);
   const out = new Map();
+  out.ki = new Set();
   if (!terms.length) return out;
   for (const it of pool) {
     const doc = lensDoc(it);
-    let sum = 0, hit = 0;
-    for (const alts of terms) {
+    let sum = 0, hit = 0, ki = false;
+    for (const [ti, alts] of terms.entries()) {
       let best = 0;
       for (const [q, aw, strict] of alts) for (const [fw, words] of doc) {
         if (aw * fw <= best) continue;
         for (const w of words) { const m = wordMatch(q, w, strict) * aw * fw; if (m > best) best = m; }
       }
+      const v = 0.9 * (visByWord?.get(terms.keys[ti])?.get(it.id) || 0);
+      if (v > best && v >= 0.3) { best = v; ki = true; }
       sum += best;
-      if (best >= 0.3) hit++;
+      hit += Math.min(1, best / 0.45); // teilweise erfüllt zählt anteilig (z. B. Motiv im Bild nur schwach erkannt)
     }
     // Wörter, die gar nicht passen, ziehen stark nach unten (alle Wörter sollen möglichst passen)
     const score = (sum / terms.length) * (0.4 + 0.6 * (hit / terms.length));
-    if (score >= 0.25) out.set(it.id, score);
+    if (score >= minScore) { out.set(it.id, score); if (ki) out.ki.add(it.id); }
   }
   return out;
 }
@@ -487,7 +508,7 @@ async function lensTextVisual(run, text, pool, textScores) {
   const rest = pool.flatMap((it) => (it.photos || []).slice(1));
   const show = () => {
     Lens.info = q.en && fold(q.en) !== fold(text) ? `im Bild gesucht: „${q.en}“` : '';
-    lensShow(lensRankVisual(pool, textScores, q), 'text');
+    lensShow(lensRankVisual(pool, text, q), 'text');
   };
   if (!await lensIndex(first, run, true)) return;
   show();
@@ -497,34 +518,38 @@ async function lensTextVisual(run, text, pool, textScores) {
   }
   if (run === Lens.run) lensStatus('');
 }
-/** Text-Treffer (Angaben) mit Treffern im Bildinhalt zusammenführen.
- *  Die Text-Bild-Werte liegen eng beieinander – deshalb zählt, wie weit ein Teil über dem Durchschnitt liegt. */
-function lensRankVisual(pool, textScores, q) {
-  // Je Foto: Ähnlichkeit zum Suchtext minus Ähnlichkeit zu „irgendein Kleidungsstück“ –
-  // so fallen Fotos, die zu allem ein bisschen passen, nicht mehr als Treffer auf
+/** Bildtreffer für einen Textbegriff: Map id -> 0–1.
+ *  Je Foto: Ähnlichkeit zum Begriff, abzüglich der halben Ähnlichkeit zu „irgendein Kleidungsstück“ (Fotos, die zu allem
+ *  ein bisschen passen, fallen so weniger auf). Da die Werte eng beieinander liegen, zählt der Abstand zum Durchschnitt
+ *  (in Standardabweichungen): ab 0,8 zählt es ein wenig, ab 2,5 voll. */
+function lensVisScores(pool, vec, base) {
   const sims = [];
   for (const it of pool) {
     let v = -Infinity;
-    for (const pid of it.photos || []) { const e = lensVecs.get(pid); if (e) v = Math.max(v, dotp(q.vec, e) - dotp(q.base, e)); }
+    for (const pid of it.photos || []) { const e = lensVecs.get(pid); if (e) v = Math.max(v, dotp(vec, e) - 0.5 * dotp(base, e)); }
     if (v > -Infinity) sims.push([it, v]);
   }
   const vis = new Map();
-  if (sims.length >= 3) {
-    const mean = sims.reduce((a, [, v]) => a + v, 0) / sims.length;
-    const sd = Math.sqrt(sims.reduce((a, [, v]) => a + (v - mean) ** 2, 0) / sims.length) || 1;
-    const best = Math.max(...sims.map(([, v]) => v));
-    for (const [it, v] of sims) {
-      const z = (v - mean) / sd;
-      // nur deutliche Ausreißer nach oben, und nicht weit hinter dem besten Treffer
-      const w = v > 0.01 ? Math.max(0, Math.min(1, (z - 1.2) / 2)) * (v >= best - 0.04 ? 1 : 0.4) : 0;
-      if (w > 0) vis.set(it.id, w);
-    }
+  if (sims.length < 3) return vis;
+  const mean = sims.reduce((a, [, v]) => a + v, 0) / sims.length;
+  const sd = Math.sqrt(sims.reduce((a, [, v]) => a + (v - mean) ** 2, 0) / sims.length) || 1;
+  for (const [it, v] of sims) {
+    const w = Math.max(0, Math.min(1, ((v - mean) / sd - 0.8) / 1.7));
+    if (w > 0) vis.set(it.id, w);
   }
+  return vis;
+}
+/** Angaben und Bildinhalt zusammenführen: je Suchwort zählt der bessere Wert, dazu ein kleiner Bonus,
+ *  wenn das Foto zur ganzen Beschreibung passt */
+function lensRankVisual(pool, text, q) {
+  const visByWord = new Map([...q.perWord].map(([k, vec]) => [k, lensVisScores(pool, vec, q.base)]));
+  const scores = lensTextScores(text, pool, visByWord, 0.2); // etwas großzügiger: Bildtreffer zu nur einem Wort weiter unten zeigen
+  const whole = q.perWord.size > 1 ? lensVisScores(pool, q.vec, q.base) : new Map();
   const out = [];
   for (const it of pool) {
-    const t = textScores.get(it.id) || 0, v = vis.get(it.id) || 0;
-    const score = t + 0.55 * v;
-    if (score >= 0.25) out.push({ it, score, rel: Math.min(1, score), ki: v > 0.15 && t < 0.3 });
+    const t = scores.get(it.id) || 0;
+    const score = t + 0.15 * (whole.get(it.id) || 0);
+    if (score >= 0.2) out.push({ it, score, rel: Math.min(1, score), ki: scores.ki.has(it.id) });
   }
   return out.sort((a, b) => b.score - a.score || !!b.it.favorit - !!a.it.favorit).slice(0, 80);
 }
