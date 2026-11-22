@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.32.2';
+const APP_VERSION = '2.33.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2167,6 +2167,12 @@ function renderSortOptions() {
   sel.innerHTML = SORTS[t].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
   sel.value = SORTS[t].some(([v]) => v === saved) ? saved : 'new';
 }
+/** Sortier-Auswahl der Auswahlfenster (gleiche Möglichkeiten wie in der Übersicht, eigene gemerkte Wahl) */
+function fillSortSelect(sel, kind, lsKey, def) {
+  const saved = localStorage.getItem(lsKey);
+  sel.innerHTML = SORTS[kind].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+  sel.value = SORTS[kind].some(([v]) => v === saved) ? saved : def;
+}
 function sortOutfits(list, sort) {
   const name = (a, b) => outfitTitle(a).localeCompare(outfitTitle(b), 'de');
   const by = {
@@ -2385,7 +2391,7 @@ function matchOutfit(o, fs, skip = null) {
   return Object.entries(fs).every(([k, v]) => !v || k === skip || (k === 'fav' ? !!o.favorit : k === 'wetter' ? todayMax() === null || fitsToday(o)
     : asList(v).some((x) => (x === CAT_NONE ? !(o[k] || []).length : (o[k] || []).includes(x)))));
 }
-function outfitFilterHtml() {
+function outfitFilterHtml(outfitFilters) {
   return [{ key: 'anlass', label: 'Anlass' }, SEASON_DEF].map((f) => {
     const vals = [...valuesFor(f.key, outfits.filter((o) => matchOutfit(o, outfitFilters, f.key))).entries()];
     if (f.order) vals.sort((a, b) => (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9)); else vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
@@ -2398,15 +2404,17 @@ function outfitFilterHtml() {
     + wxSelect(outfitFilters.wetter || '', outfits.filter(fitsToday).length)
     + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
 }
+/** Suche bei Outfits: Name, Notiz, Anlass, Jahreszeit und enthaltene Teile */
+const outfitMatchesQuery = (o, q) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q);
 function renderOutfits() {
-  $('#filters').innerHTML = outfitFilterHtml();
+  $('#filters').innerHTML = outfitFilterHtml(outfitFilters);
   const nf = Object.values(outfitFilters).filter(Boolean).length;
   $('#filterCount').textContent = nf ? `(${nf})` : '';
   $('#filterToggle').classList.toggle('active', nf > 0);
   const q = $('#search').value.trim().toLowerCase();
   const list = outfits
     .filter((o) => matchOutfit(o, outfitFilters))
-    .filter((o) => !q || [outfitTitle(o), o.notiz, ...(o.anlass || []), ...(o.jahreszeit || []), ...outfitItems(o).map(itemTitle)].join(' ').toLowerCase().includes(q));
+    .filter((o) => outfitMatchesQuery(o, q));
   sortOutfits(list, $('#sort').value);
   $('#count').textContent = outfits.length
     ? (list.length === outfits.length ? `${outfits.length} ${outfits.length === 1 ? 'Outfit' : 'Outfits'}` : `${list.length} von ${outfits.length} Outfits`)
@@ -2535,6 +2543,8 @@ const pick = { filters: {}, selected: new Set(), onDone: null };
 /** Teile auswählen; onDone erhält die bisherige Reihenfolge plus neu Ausgewählte hinten */
 function openItemPicker(ids = oed.itemIds, onDone = (next) => { oed.itemIds = next; renderOutfitItems(); }, exclude = null) {
   pick.filters = {};
+  openDrop = null;
+  fillSortSelect($('#pickSort'), 'items', 'ks_psort', 'kategorie');
   pick.exclude = exclude;
   pick.selected = new Set(ids);
   pick.base = [...ids];
@@ -2545,11 +2555,11 @@ function openItemPicker(ids = oed.itemIds, onDone = (next) => { oed.itemIds = ne
   $('#pickDlg').showModal();
 }
 function renderPicker() {
-  $('#pickFilters').innerHTML = filterSelectsHtml(pick.filters, false);
+  $('#pickFilters').innerHTML = filterSelectsHtml(pick.filters, true);
   const n = Object.entries(pick.filters).filter(([, v]) => v).length;
   $('#pickFilterCount').textContent = n ? `(${n})` : '';
   $('#pickFilterToggle').classList.toggle('active', n > 0);
-  const list = filterItems($('#pickSearch').value, pick.filters, 'kategorie').filter((it) => it.id !== pick.exclude);
+  const list = filterItems($('#pickSearch').value, pick.filters, $('#pickSort').value).filter((it) => it.id !== pick.exclude);
   $('#pickGrid').innerHTML = list.map((it) => itemCardHtml(it, { selected: pick.selected.has(it.id) })).join('')
     || '<p class="muted">Keine passenden Teile.</p>';
   $('#pickDone').textContent = `Fertig (${pick.selected.size})`;
@@ -3402,17 +3412,25 @@ function renderDay() {
 
 /* Outfit auswählen (Kalender, Packliste) */
 let opickCb = null;
+const opickFilters = {};
 function openOutfitPicker(title, cb) {
   opickCb = cb;
   $('#opickTitle').textContent = title;
   $('#opickSearch').value = '';
+  for (const k of Object.keys(opickFilters)) delete opickFilters[k];
+  openDrop = null;
+  $('#opickFilters').hidden = true;
+  fillSortSelect($('#opickSort'), 'outfits', 'ks_posort', 'new');
   renderOutfitPicker();
   $('#opickDlg').showModal();
 }
 function renderOutfitPicker() {
   const q = $('#opickSearch').value.trim().toLowerCase();
-  const list = outfits.filter((o) => !q || [outfitTitle(o), ...(o.anlass || []), ...(o.jahreszeit || [])].join(' ').toLowerCase().includes(q))
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  $('#opickFilters').innerHTML = outfitFilterHtml(opickFilters);
+  const n = Object.values(opickFilters).filter(Boolean).length;
+  $('#opickFilterCount').textContent = n ? `(${n})` : '';
+  $('#opickFilterToggle').classList.toggle('active', n > 0);
+  const list = sortOutfits(outfits.filter((o) => matchOutfit(o, opickFilters) && outfitMatchesQuery(o, q)), $('#opickSort').value);
   $('#opickGrid').innerHTML = list.map(outfitCardHtml).join('') || '<p class="muted">Keine Outfits gefunden.</p>';
 }
 
@@ -3622,6 +3640,20 @@ function wirePlanner() {
     if (uw) { await setOutfitWorn(uw.dataset.dayUnwear, d, false); await afterChange(); renderDay(); }
   });
   $('#opickSearch').addEventListener('input', renderOutfitPicker);
+  $('#opickSort').addEventListener('change', () => { localStorage.setItem('ks_posort', $('#opickSort').value); renderOutfitPicker(); });
+  $('#opickFilterToggle').addEventListener('click', () => { $('#opickFilters').hidden = !$('#opickFilters').hidden; });
+  $('#opickFilters').addEventListener('change', (e) => {
+    const k = e.target.dataset.filter;
+    if (!k) return;
+    setFilter(opickFilters, k, e.target.value);
+    renderOutfitPicker();
+  });
+  $('#opickFilters').addEventListener('click', (e) => {
+    if (onFilterDrop(e, opickFilters)) return renderOutfitPicker();
+    if (!e.target.closest('[data-reset-filters]')) return;
+    for (const k of Object.keys(opickFilters)) delete opickFilters[k];
+    renderOutfitPicker();
+  });
   $('#opickGrid').addEventListener('click', (e) => {
     const c = e.target.closest('[data-outfit]');
     if (!c) return;
@@ -4384,6 +4416,7 @@ function wireEvents() {
     if ($('#detail').open && detailId) openDetail(detailId);
   });
   $('#pickSearch').addEventListener('input', renderPicker);
+  $('#pickSort').addEventListener('change', () => { localStorage.setItem('ks_psort', $('#pickSort').value); renderPicker(); });
   $('#pickFilterToggle').addEventListener('click', () => { $('#pickFilters').hidden = !$('#pickFilters').hidden; });
   $('#pickFilters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
@@ -4437,6 +4470,7 @@ function wireEvents() {
     openDrop = null;
     if (!$('#filters').hidden) render();
     if ($('#pickDlg').open) renderPicker();
+    if ($('#opickDlg').open) renderOutfitPicker();
   });
   document.addEventListener('input', (e) => {
     const inp = e.target.closest?.('[data-fsearch]');

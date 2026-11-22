@@ -383,6 +383,7 @@
   <div class="picktools">
     <input id="pickSearch" type="search" placeholder="Suchen …" autocomplete="off">
     <button id="pickFilterToggle" class="chipbtn" type="button">Filter <span id="pickFilterCount"></span></button>
+    <select id="pickSort" aria-label="Sortierung"></select>
   </div>
   <section id="pickFilters" class="filters" hidden></section>
   <div class="sheetbody"><div id="pickGrid" class="grid"></div></div>
@@ -405,7 +406,12 @@
     <h2 id="opickTitle">Outfit wählen</h2>
     <span></span>
   </header>
-  <div class="picktools"><input id="opickSearch" type="search" placeholder="Suchen …" autocomplete="off"></div>
+  <div class="picktools">
+    <input id="opickSearch" type="search" placeholder="Suchen …" autocomplete="off">
+    <button id="opickFilterToggle" class="chipbtn" type="button">Filter <span id="opickFilterCount"></span></button>
+    <select id="opickSort" aria-label="Sortierung"></select>
+  </div>
+  <section id="opickFilters" class="filters" hidden></section>
   <div class="sheetbody"><div id="opickGrid" class="grid outfits"></div></div>
 </dialog>
 

@@ -813,3 +813,8 @@ textarea.autosize { resize: none; overflow: hidden; }
 .infoval { display: block; }
 .infoval .kexpl { display: block; }
 .infoval .kexpl[hidden] { display: none; }
+
+/* Auswahlfenster (Teile/Outfits): Sortierung und Filter wie in der Übersicht */
+.picktools select { flex: 0 1 auto; min-width: 0; max-width: 34%; text-overflow: ellipsis; border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 0 6px; font-size: 14px; }
+.picktools input { flex: 1 1 90px; }
+#pickFilters, #opickFilters { max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; padding-top: 10px; padding-bottom: 10px; background: var(--bg); border-bottom: 1px solid var(--line); }
