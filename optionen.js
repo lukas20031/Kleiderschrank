@@ -53,6 +53,27 @@ const SCHNITTE = {
   Unterteile: ['Skinny', 'Slim Fit', 'Regular Fit', 'Straight', 'Tapered', 'Relaxed Fit', 'Loose / Baggy', 'Bootcut', 'Ausgestellt', 'Wide Leg', 'Carrot'],
 };
 
+// Erklärungen zu den Schnitten (das „?“ in der Auswahl und in der Detailansicht)
+const SCHNITT_INFO = {
+  'Slim Fit': 'Körpernah, aber nicht hauteng geschnitten – bei Oberteilen schmal an Brust, Taille und Ärmeln, bei Hosen schmal an Oberschenkel und Bein.',
+  'Regular Fit': 'Klassischer, gerader Schnitt mit etwas Bewegungsfreiheit – weder eng noch weit.',
+  'Relaxed Fit': 'Locker und bequem geschnitten, mit spürbar mehr Weite als Regular Fit, aber nicht übergroß.',
+  'Oversize': 'Bewusst deutlich größer geschnitten: Schultern sitzen tiefer, Körper und Ärmel sind weit.',
+  'Boxy': 'Kastenförmig: gerade, breite Silhouette ohne Taillierung, oft etwas kürzer.',
+  'Muscle Fit': 'Sehr körpernah an Brust, Schultern und Oberarmen, zur Taille schmaler – betont die Muskulatur.',
+  'Tailliert': 'An der Taille enger geschnitten, betont die Körperform.',
+  'Cropped': 'Verkürzt: endet über der Hüfte bzw. auf Taillenhöhe.',
+  'Longline': 'Verlängert: reicht deutlich über die Hüfte, oft mit abgerundetem Saum.',
+  'Skinny': 'Hauteng vom Bund bis zum Knöchel, meist mit Stretch-Anteil.',
+  'Straight': 'Gerades Bein: von der Hüfte bis zum Saum gleich weit.',
+  'Tapered': 'Oben bequem, zum Knöchel hin schmaler zulaufend.',
+  'Loose / Baggy': 'Sehr weit und locker, oft mit tiefem Schritt; das Bein fällt über den Schuh.',
+  'Bootcut': 'Bis zum Knie schmal, darunter leicht ausgestellt – Platz für Stiefel.',
+  'Ausgestellt': 'Ab dem Knie deutlich weiter werdend (Schlag, „Flared“).',
+  'Wide Leg': 'Durchgehend weites Bein von der Hüfte bis zum Saum.',
+  'Carrot': 'An Hüfte und Oberschenkel weit, zum Knöchel stark verjüngt – wie eine Karotte.',
+};
+
 const ZUSTAENDE = ['Neu mit Etikett', 'Neu', 'Wie neu', 'Sehr gut', 'Gut', 'Getragen', 'Stark getragen', 'Flecken/Löcher', 'Reparaturbedürftig'];
 
 /* Waschhinweise (Pflegesymbole), gruppiert. Symbole als kleine SVGs (24×26, Strichstärke 1.6, currentColor). */

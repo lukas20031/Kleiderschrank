@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.32.0';
+const APP_VERSION = '2.32.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -20,7 +20,7 @@ const FIELDS = [
   { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true, custom: true, neu: 'neues Material' },
   { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
   // Schnitt: Auswahl hängt von der Oberkategorie ab (SCHNITTE in optionen.js), nur dort sichtbar
-  { key: 'schnitt', label: 'Schnitt', type: 'multi', options: [...new Set(Object.values(SCHNITTE).flat())], wide: true, custom: true, neu: 'neuen Schnitt' },
+  { key: 'schnitt', label: 'Schnitt', type: 'multi', options: [...new Set(Object.values(SCHNITTE).flat())], wide: true, custom: true, neu: 'neuen Schnitt', info: SCHNITT_INFO },
   { key: 'passform', label: 'Passform', type: 'chips', options: ['Zu klein', 'Eng', 'Passend', 'Locker', 'Zu groß'], wide: true },
   { key: 'anzahl', label: 'Anzahl', type: 'count', wide: true, noFilter: true },
   { key: 'marke', label: 'Marke', type: 'single', options: [], custom: true, neu: 'neue Marke', wide: true },
@@ -2619,7 +2619,9 @@ async function openDetail(id) {
     ...FIELDS.filter((f) => f.type !== 'url').map((f) => [f.label, withAlt(f.key, f.key === 'preis' && qty(it) > 1 && hasValue(it.preis)
       ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? farbList(it) : null,
       f.icon ? `<button type="button" class="careicons" data-careexpand aria-label="Waschhinweise anzeigen">${fieldValues(it, f.key).map(careIcon).join('')}</button><span class="carelist" hidden>${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}<span class="ct">${esc(v)}</span>${PFLEGE_INFO[v]
-        ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(PFLEGE_INFO[v])}</span>` : ''}</span>`).join('')}</span>` : null]),
+        ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(PFLEGE_INFO[v])}</span>` : ''}</span>`).join('')}</span>`
+        : f.info ? fieldValues(it, f.key).map((v) => `<span class="infoval">${esc(v)}${f.info[v]
+          ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(f.info[v])}</span>` : ''}</span>`).join('') : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
   const link = normalizeUrl(it.link);
@@ -2773,6 +2775,7 @@ function renderAnteilSum() {
 let optKey = null;
 let optInfo = null; // aufgeklappte Erklärung (Waschhinweise)
 let optOpen = -1; // aufgeklappte Gruppe (nur bei Feldern mit Gruppen, z. B. Größe)
+let optOpenSet = new Set(); // aufgeklappte Gruppen bei den Waschhinweisen (mehrere gleichzeitig)
 /** Auswahlwerte eines Felds inkl. selbst angelegter (z. B. eigene Materialien) */
 /** Schnitte für eine Oberkategorie: feste Liste + selbst angelegte, die bei Teilen dieser Kategorie vorkommen */
 function schnittOptions(kat) {
@@ -2798,6 +2801,7 @@ function openOptions(key) {
   const f = FIELD[key];
   const sel = fieldValues(ed.vals, key);
   optOpen = f.groups && !f.flatGroups ? f.groups.findIndex(([, opts]) => opts.some((o) => sel.includes(o))) : -1;
+  optOpenSet = new Set(['Häufig verwendet']); // anfangs nur die häufig verwendeten aufgeklappt
   renderOptions();
   $('#optDlg').showModal();
   ($('#optList .ochip.active') || $('#optList .kl2.open'))?.scrollIntoView({ block: 'center' });
@@ -2836,21 +2840,22 @@ function renderOptions() {
   let groups = f.groups || [[null, optionsOf(optKey)]];
   // Waschhinweise: oben noch einmal die bei anderen Teilen häufig verwendeten (nicht beim Suchen, sonst doppelt)
   if (optKey === 'pflege' && !q) groups = [...frequentGroups('pflege'), ...groups];
-  const chips = (hits) => f.icon
-    // Waschhinweise: eine Zeile je Hinweis, mit „?“ für die ausführliche Erklärung
-    ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${careIcon(o)}${esc(o)}</button>${
-      PFLEGE_INFO[o] ? `<button type="button" class="kinfo${optInfo === o ? ' on' : ''}" data-optinfo="${esc(o)}" aria-label="Was bedeutet ${esc(o)}?" aria-expanded="${optInfo === o}">?</button>` : ''}${
-      optInfo === o ? `<p class="kexpl">${esc(PFLEGE_INFO[o])}</p>` : ''}</div>`).join('')}</div>`
+  const info = f.icon ? PFLEGE_INFO : f.info;
+  const chips = (hits) => info
+    // Waschhinweise, Schnitte: eine Zeile je Eintrag, mit „?“ für die ausführliche Erklärung
+    ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.icon ? careIcon(o) : ''}${esc(o)}</button>${
+      info[o] ? `<button type="button" class="kinfo${optInfo === o ? ' on' : ''}" data-optinfo="${esc(o)}" aria-label="Was bedeutet ${esc(o)}?" aria-expanded="${optInfo === o}">?</button>` : ''}${
+      optInfo === o ? `<p class="kexpl">${esc(info[o])}</p>` : ''}</div>`).join('')}</div>`
     : `<div class="ochips${f.swatch ? ' swatches' : ''}">${hits.map((o) =>
     `<button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.swatch ? swatch(o) : ''}${esc(o)}</button>`).join('')}</div>`;
   const html = groups.map(([g, opts], gi) => {
     const hits = opts.filter((o) => !q || o.toLowerCase().includes(q) || (g && g.toLowerCase().includes(q)));
     if (!hits.length) return '';
     if (!g) return chips(hits);
-    if (f.flatGroups) return `<h4 class="ogroup">${esc(g)}</h4>${chips(hits)}`;
-    const open = !!q || optOpen === gi;
+    // Waschhinweise: jede Gruppe einzeln auf-/zuklappbar (beim Suchen alle offen)
+    const open = !!q || (f.flatGroups ? optOpenSet.has(g) : optOpen === gi);
     const picked = opts.filter((o) => sel.has(o));
-    return `<button type="button" class="kl2${open ? ' open' : ''}${picked.length ? ' chosen' : ''}" data-og="${gi}" aria-expanded="${open}">
+    return `<button type="button" class="kl2${open ? ' open' : ''}${picked.length ? ' chosen' : ''}" ${f.flatGroups ? `data-ogf="${esc(g)}"` : `data-og="${gi}"`} aria-expanded="${open}">
       <span>${esc(g)}${picked.length && !open ? `<small>${esc(picked.join(', '))}</small>` : ''}</span><span class="chev" aria-hidden="true">›</span></button>${open ? chips(hits) : ''}`;
   }).join('');
   const raw = $('#optSearch').value.trim();
@@ -4516,6 +4521,14 @@ function wireEvents() {
   $('#optSearch').addEventListener('input', renderOptions);
   $('#optList').addEventListener('click', (e) => {
     const g = e.target.closest('.kl2');
+    if (g && g.dataset.ogf !== undefined) {
+      const name = g.dataset.ogf;
+      if (optOpenSet.has(name)) optOpenSet.delete(name); else optOpenSet.add(name);
+      const top = $('#optList').scrollTop;
+      renderOptions();
+      $('#optList').scrollTop = top;
+      return;
+    }
     if (g) {
       const gi = Number(g.dataset.og);
       optOpen = optOpen === gi ? -1 : gi;

@@ -808,3 +808,8 @@ textarea.autosize { resize: none; overflow: hidden; }
 .unit.count { gap: 6px; }
 .unit.count .chipbtn { padding: 3px 12px; font-size: 16px; line-height: 1.2; }
 .unit.count input { width: 48px; padding: 5px 4px; }
+
+/* Detailansicht: Werte mit Erklärung (Schnitt) untereinander */
+.infoval { display: block; }
+.infoval .kexpl { display: block; }
+.infoval .kexpl[hidden] { display: none; }
