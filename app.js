@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.32.1';
+const APP_VERSION = '2.32.2';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2066,8 +2066,7 @@ function renderFilters() {
 }
 
 /** Teile nach Suchtext, Filtern und Sortierung */
-/** Ohne Angabe bei Anlass/Jahreszeit passt ein Eintrag zu jedem Filterwert */
-const OPEN_KEYS = ['anlass', 'jahreszeit', 'passform'];
+/* Teile ohne Angabe passen nicht zu einem gewählten Wert – dafür gibt es „Nichts eingetragen“ (CAT_NONE) */
 /** Passt ein Teil zu allen Filtern (optional ohne einen bestimmten, für die Auswahlmöglichkeiten)? */
 function matchFilters(it, fState, skip = null) {
   if (!matchSpecial(it, skip && SPECIAL_KEYS.includes(skip) ? { ...fState, [skip]: '' } : fState)) return false;
@@ -2075,7 +2074,6 @@ function matchFilters(it, fState, skip = null) {
     if (!v || k === skip || SPECIAL_KEYS.includes(k)) continue;
     if (v === CAT_NONE) { if (fieldValues(it, k).length) return false; continue; }
     const vals = fieldValues(it, k);
-    if (OPEN_KEYS.includes(k) && !vals.length) continue;
     // Mehrfachauswahl (Farben): passt, wenn das Teil mindestens eine der gewählten Farben hat
     if (Array.isArray(v)) { if (v.length && !v.some((x) => (x === CAT_NONE ? !vals.length : vals.includes(x)))) return false; continue; }
     if (!vals.includes(v)) return false;
@@ -2385,7 +2383,7 @@ function collageHtml(o, big = false, usePhoto = true) {
 const outfitFilters = JSON.parse(localStorage.getItem('ks_ofilters') || '{}');
 function matchOutfit(o, fs, skip = null) {
   return Object.entries(fs).every(([k, v]) => !v || k === skip || (k === 'fav' ? !!o.favorit : k === 'wetter' ? todayMax() === null || fitsToday(o)
-    : !(o[k] || []).length && OPEN_KEYS.includes(k) ? true : asList(v).some((x) => (x === CAT_NONE ? !(o[k] || []).length : (o[k] || []).includes(x)))));
+    : asList(v).some((x) => (x === CAT_NONE ? !(o[k] || []).length : (o[k] || []).includes(x)))));
 }
 function outfitFilterHtml() {
   return [{ key: 'anlass', label: 'Anlass' }, SEASON_DEF].map((f) => {
