@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.30.1';
+const APP_VERSION = '2.31.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -17,18 +17,21 @@ const APP_VERSION = '2.30.1';
 const FARB_MAP = new Map(FARBEN);
 const FIELDS = [
   { key: 'farben', label: 'Farbe', type: 'multi', options: FARBEN.map((f) => f[0]), swatch: true, wide: true },
-  { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true, custom: true },
+  { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true, custom: true, neu: 'neues Material' },
   { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
+  // Schnitt: Auswahl hängt von der Oberkategorie ab (SCHNITTE in optionen.js), nur dort sichtbar
+  { key: 'schnitt', label: 'Schnitt', type: 'single', options: [...new Set(Object.values(SCHNITTE).flat())], wide: true, custom: true, neu: 'neuen Schnitt' },
   { key: 'passform', label: 'Passform', type: 'chips', options: ['Zu klein', 'Eng', 'Passend', 'Locker', 'Zu groß'], wide: true },
   { key: 'anzahl', label: 'Anzahl', type: 'count', wide: true, noFilter: true },
   { key: 'marke', label: 'Marke', type: 'text', defaults: [], wide: true },
   { key: 'herkunft', label: 'Herkunftsland', type: 'text', wide: true, defaults: LAENDER },
-  { key: 'preis', label: 'Preis', type: 'price', wide: true, noFilter: true },
-  { key: 'kaufdatum', label: 'Kaufdatum', type: 'date', wide: true, noFilter: true },
-  { key: 'link', label: 'Link zum Produkt', type: 'url', wide: true, noFilter: true },
-  { key: 'lagerort', label: 'Lagerort', type: 'text', defaults: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'], wide: true },
+  { key: 'pflege', label: 'Waschhinweise', type: 'multi', groups: PFLEGE, flatGroups: true, icon: true, wide: true, noFilter: true },
   { key: 'zustand', label: 'Zustand', type: 'chips', options: ZUSTAENDE, wide: true },
-  { key: 'pflege', label: 'Waschhinweise', type: 'multi', groups: PFLEGE, flatGroups: true, icon: true, wide: true, noFilter: true, slot: 2 },
+  // ganz unten im Editor
+  { key: 'preis', label: 'Preis', type: 'price', wide: true, noFilter: true, slot: 2 },
+  { key: 'kaufdatum', label: 'Kaufdatum', type: 'date', wide: true, noFilter: true, slot: 2 },
+  { key: 'link', label: 'Link zum Produkt', type: 'url', wide: true, noFilter: true, slot: 2 },
+  { key: 'lagerort', label: 'Lagerort', type: 'text', defaults: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'], wide: true, slot: 2 },
 ];
 const FIELD = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
 for (const f of FIELDS) {
@@ -2760,8 +2763,17 @@ let optKey = null;
 let optInfo = null; // aufgeklappte Erklärung (Waschhinweise)
 let optOpen = -1; // aufgeklappte Gruppe (nur bei Feldern mit Gruppen, z. B. Größe)
 /** Auswahlwerte eines Felds inkl. selbst angelegter (z. B. eigene Materialien) */
+/** Schnitte für eine Oberkategorie: feste Liste + selbst angelegte, die bei Teilen dieser Kategorie vorkommen */
+function schnittOptions(kat) {
+  const base = SCHNITTE[kat] || [];
+  const extra = [...valuesFor('schnitt', [...items, ...wishes, ...trashItems].filter((i) => i.kategorie === kat)).keys(), ...(ed?.vals.schnitt ? [ed.vals.schnitt] : [])]
+    .filter((v) => !base.includes(v));
+  return [...base, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
+}
+const hasSchnitt = (kat) => !!SCHNITTE[kat];
 function optionsOf(key) {
   const f = FIELD[key];
+  if (key === 'schnitt') return schnittOptions(ed?.kat?.kategorie);
   if (!f.custom) return f.options;
   const extra = [...valuesFor(key, [...items, ...wishes, ...trashItems]).keys(), ...(ed?.vals[key] || [])].filter((v) => !f.order.has(v));
   return [...f.options, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
@@ -2780,13 +2792,32 @@ function openOptions(key) {
 }
 /** Waschhinweise, die bei anderen Teilen oft vorkommen (bei mind. 2 Teilen und mind. 20 % der Teile mit Waschhinweisen):
  *  höchstens die 20 häufigsten, angezeigt in der üblichen Reihenfolge der Liste */
-function frequentValues(key, max = 20) {
+/** Häufig verwendete Waschhinweise als Gruppen für die Auswahl.
+ *  Zuerst die, die bei Teilen der gleichen Unterkategorie (bei zu wenigen Daten: der gleichen Kategorie) häufig sind,
+ *  danach die übrigen häufigen aller Teile – zusammen höchstens 20, je Gruppe in der üblichen Reihenfolge.
+ *  „Häufig“ = bei mind. 2 Teilen und mind. 20 % der betrachteten Teile mit Waschhinweisen. */
+function frequentGroups(key, max = 20) {
+  const order = (a, b) => (FIELD[key].order.get(a) ?? 1e9) - (FIELD[key].order.get(b) ?? 1e9);
   const recs = [...items, ...wishes].filter((it) => it.id !== ed?.id && fieldValues(it, key).length);
-  const min = Math.max(2, Math.ceil(recs.length * 0.2));
-  return [...valuesFor(key, recs).entries()].filter(([, n]) => n >= min)
-    .sort((a, b) => b[1] - a[1] || (FIELD[key].order.get(a[0]) ?? 1e9) - (FIELD[key].order.get(b[0]) ?? 1e9))
-    .slice(0, max).map(([v]) => v)
-    .sort((a, b) => (FIELD[key].order.get(a) ?? 1e9) - (FIELD[key].order.get(b) ?? 1e9));
+  const frequent = (pool) => {
+    const min = Math.max(2, Math.ceil(pool.length * 0.2));
+    return [...valuesFor(key, pool).entries()].filter(([, n]) => n >= min).sort((a, b) => b[1] - a[1] || order(a[0], b[0])).map(([v]) => v);
+  };
+  let catTop = [], catName = '';
+  for (const k of ['unterkategorie', 'kategorie']) {
+    const v = ed?.kat?.[k];
+    if (!v) continue;
+    const pool = recs.filter((it) => it[k] === v);
+    if (pool.length < 3) continue; // zu wenige Teile für eine Aussage
+    catTop = frequent(pool).slice(0, max);
+    catName = v;
+    break;
+  }
+  const rest = frequent(recs).filter((v) => !catTop.includes(v)).slice(0, max - catTop.length);
+  const groups = [];
+  if (catTop.length) groups.push([`Häufig bei ${catName}`, catTop.sort(order)]);
+  if (rest.length) groups.push([catTop.length ? 'Häufig bei anderen Teilen' : 'Häufig verwendet', rest.sort(order)]);
+  return groups;
 }
 function renderOptions() {
   const f = FIELD[optKey];
@@ -2795,7 +2826,7 @@ function renderOptions() {
   $('#optTitle').textContent = f.type === 'multi' && sel.size ? `${f.label} (${sel.size})` : f.label;
   let groups = f.groups || [[null, optionsOf(optKey)]];
   // Waschhinweise: oben noch einmal die bei anderen Teilen häufig verwendeten (nicht beim Suchen, sonst doppelt)
-  if (optKey === 'pflege' && !q) { const top = frequentValues('pflege'); if (top.length) groups = [['Häufig verwendet', top], ...groups]; }
+  if (optKey === 'pflege' && !q) groups = [...frequentGroups('pflege'), ...groups];
   const chips = (hits) => f.icon
     // Waschhinweise: eine Zeile je Hinweis, mit „?“ für die ausführliche Erklärung
     ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${careIcon(o)}${esc(o)}</button>${
@@ -2815,7 +2846,7 @@ function renderOptions() {
   }).join('');
   const raw = $('#optSearch').value.trim();
   const canAdd = f.custom && raw && !optionsOf(optKey).some((o) => o.toLowerCase() === raw.toLowerCase());
-  const add = canAdd ? `<button type="button" class="chipbtn addval" data-newval="${esc(raw)}">+ „${esc(raw)}“ als neues ${esc(f.label)} hinzufügen</button>` : '';
+  const add = canAdd ? `<button type="button" class="chipbtn addval" data-newval="${esc(raw)}">+ „${esc(raw)}“ als ${esc(f.neu || `neues ${f.label}`)} hinzufügen</button>` : '';
   $('#optList').innerHTML = (html || (add ? '' : '<p class="muted">Nichts gefunden.</p>')) + add;
 }
 
@@ -2869,6 +2900,8 @@ const photoFigure = (pid, tags) => `<figure><img data-pid="${esc(pid)}" src="${t
 
 /* ---------------- Kategorie-Auswahl ---------------- */
 function renderKatButton() {
+  const sf = $('#editor [data-field="schnitt"]');
+  if (sf) sf.hidden = !hasSchnitt(ed.kat.kategorie);
   const p = catPath(ed.kat);
   $('#katText').textContent = p || 'Kategorie wählen';
   $('#katBtn').classList.toggle('empty', !p);
@@ -2966,7 +2999,7 @@ function openEditor(id = null, copyId = null) {
   }
   form.elements.notiz.value = it?.notiz || '';
   // Wunschliste: Kaufdatum, Lagerort und Zustand gibt es (noch) nicht
-  for (const k of WISH_HIDDEN) $(`#fieldGrid [data-field="${k}"]`).hidden = ed.wunsch;
+  for (const k of WISH_HIDDEN) $(`#editor [data-field="${k}"]`).hidden = ed.wunsch;
   $('#deleteBtn').hidden = !orig;
   $('#metaInfo').textContent = orig
     ? `Angelegt ${new Date(it.createdAt).toLocaleString('de-DE')} · geändert ${new Date(it.updatedAt).toLocaleString('de-DE')}`
@@ -3016,6 +3049,7 @@ async function saveEditor() {
   it.v = DATA_VERSION;
   Object.assign(it, ed.kat);
   if (it.kategorie) delete it.kategorieAlt;
+  if (!hasSchnitt(it.kategorie)) delete it.schnitt;
   if (!it.status) delete it.status; else delete it.waesche; // Aussortiertes ist nicht in der Wäsche
   if (ed.wunsch) {
     it.wunsch = true; delete it.status; delete it.waesche;
@@ -4493,8 +4527,9 @@ function wireEvents() {
     const nv = e.target.closest('[data-newval]');
     if (nv) {
       const v = nv.dataset.newval.charAt(0).toUpperCase() + nv.dataset.newval.slice(1);
-      ed.vals[optKey] = [...(ed.vals[optKey] || []), v];
       $('#optSearch').value = '';
+      if (FIELD[optKey].type !== 'multi') { ed.vals[optKey] = v; $('#optDlg').close(); return; }
+      ed.vals[optKey] = [...(ed.vals[optKey] || []), v];
       renderOptions();
       return;
     }
@@ -5103,6 +5138,7 @@ const VALUE_KINDS = [
   { key: 'materialien', label: 'Materialien', one: 'Material', builtin: MATERIALIEN },
   { key: 'marke', label: 'Marken', one: 'Marke', builtin: [] },
   { key: 'lagerort', label: 'Lagerorte', one: 'Lagerort', builtin: [] },
+  { key: 'schnitt', label: 'Schnitte', one: 'Schnitt', builtin: FIELD.schnitt.options },
 ];
 let valueKind = 'anlass';
 function renderValues() {

@@ -263,7 +263,7 @@ const LENS_SYN = {
 };
 const LENS_FIELDS = [
   ['name', 1], ['typ', 1], ['unterkategorie', 0.9], ['kategorie', 0.7], ['farben', 0.9], ['marke', 0.9], ['materialien', 0.8],
-  ['groesse', 0.6], ['passform', 0.45], ['herkunft', 0.5], ['lagerort', 0.5], ['zustand', 0.4], ['pflege', 0.3],
+  ['groesse', 0.6], ['schnitt', 0.7], ['passform', 0.45], ['herkunft', 0.5], ['lagerort', 0.5], ['zustand', 0.4], ['pflege', 0.3],
   ['anlass', 0.6], ['jahreszeit', 0.6], ['notiz', 0.5], ['status', 0.5], ['_tags', 0.5], ['_waesche', 0.5],
 ];
 // Gewicht je Farbrolle: Teile, bei denen die gesuchte Farbe Hauptfarbe ist, kommen zuerst

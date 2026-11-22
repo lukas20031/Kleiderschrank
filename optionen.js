@@ -47,6 +47,12 @@ const GROESSEN = [
 ];
 
 // Zustand – von bester zu schlechtester Qualität
+// Schnitte je Oberkategorie (nur dort erscheint das Feld „Schnitt“). Eigene Schnitte lassen sich im Editor ergänzen.
+const SCHNITTE = {
+  Oberteile: ['Slim Fit', 'Regular Fit', 'Relaxed Fit', 'Oversize', 'Boxy', 'Muscle Fit', 'Tailliert', 'Cropped', 'Longline'],
+  Unterteile: ['Skinny', 'Slim Fit', 'Regular Fit', 'Straight', 'Tapered', 'Relaxed Fit', 'Loose / Baggy', 'Bootcut', 'Ausgestellt', 'Wide Leg', 'Carrot'],
+};
+
 const ZUSTAENDE = ['Neu mit Etikett', 'Neu', 'Wie neu', 'Sehr gut', 'Gut', 'Getragen', 'Stark getragen', 'Flecken/Löcher', 'Reparaturbedürftig'];
 
 /* Waschhinweise (Pflegesymbole), gruppiert. Symbole als kleine SVGs (24×26, Strichstärke 1.6, currentColor). */

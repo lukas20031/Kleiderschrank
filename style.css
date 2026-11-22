@@ -796,3 +796,7 @@ body.filtering #filters [data-reset-filters] { display: none; }
 .frow[hidden], .fnohit[hidden] { display: none; }
 .fdropsearch { margin: 4px 8px 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 16px; position: sticky; top: 0; z-index: 1; }
 .fnohit { padding: 6px 12px; margin: 0; font-size: 13px; }
+
+/* Passform: fünf Auswahlknöpfe in einer Zeile */
+#chips-passform { flex-wrap: nowrap; gap: 4px; }
+#chips-passform .chipbtn { flex: 1 1 0; min-width: 0; padding: 6px 2px; font-size: 13px; text-align: center; }
