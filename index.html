@@ -131,12 +131,12 @@
       </div>
       <div id="fieldGrid" class="fieldgrid"></div>
 
+      <div class="field" id="statusField">Status
+        <div class="seg small" id="statusSeg"></div>
+      </div>
+
       <div class="field">Anlass
-        <div id="anlassChips" class="chips"></div>
-        <div class="row">
-          <input id="anlassNew" placeholder="Weiteren Anlass hinzufügen" autocomplete="off">
-          <button type="button" id="anlassAdd" class="chipbtn">Hinzufügen</button>
-        </div>
+        <button type="button" class="katbtn pickbtn" id="anlassPick"></button>
       </div>
 
       <div class="field">Jahreszeit
@@ -148,21 +148,16 @@
         <div class="row"><button type="button" id="matchAdd" class="chipbtn">+ Teile auswählen</button></div>
       </div>
 
-      <label class="field" hidden>Gehört
-        <select id="ownerSel"></select>
-      </label>
-
       <label class="field">Notiz
-        <textarea name="notiz" rows="3" placeholder="optional"></textarea>
+        <textarea name="notiz" rows="2" class="autosize" placeholder="optional"></textarea>
       </label>
-
-      <div class="field" id="statusField">Status
-        <div class="seg small" id="statusSeg"></div>
-        <span class="hint">Aussortierte, verkaufte und verschenkte Teile verschwinden aus der Übersicht (Filter „Status“ zeigt sie wieder), bleiben aber in Outfits erhalten.</span>
-      </div>
 
       <!-- Preis, Kaufdatum, Link, Lagerort -->
       <div id="fieldGrid2" class="fieldgrid"></div>
+
+      <label class="field" hidden>Gehört
+        <select id="ownerSel"></select>
+      </label>
 
       <button type="button" id="deleteBtn" class="danger" hidden>Teil löschen</button>
       <p id="metaInfo" class="hint"></p>
@@ -371,7 +366,7 @@
         <select id="oOwnerSel"></select>
       </label>
       <label class="field">Notiz
-        <textarea name="onotiz" rows="2" placeholder="optional"></textarea>
+        <textarea name="onotiz" rows="2" class="autosize" placeholder="optional"></textarea>
       </label>
       <button type="button" id="outfitDelete" class="danger" hidden>Outfit löschen</button>
     </div>

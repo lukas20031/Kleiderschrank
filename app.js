@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.31.0';
+const APP_VERSION = '2.32.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -20,27 +20,28 @@ const FIELDS = [
   { key: 'materialien', label: 'Material', type: 'multi', options: MATERIALIEN, wide: true, custom: true, neu: 'neues Material' },
   { key: 'groesse', label: 'Größe', type: 'single', groups: GROESSEN, wide: true },
   // Schnitt: Auswahl hängt von der Oberkategorie ab (SCHNITTE in optionen.js), nur dort sichtbar
-  { key: 'schnitt', label: 'Schnitt', type: 'single', options: [...new Set(Object.values(SCHNITTE).flat())], wide: true, custom: true, neu: 'neuen Schnitt' },
+  { key: 'schnitt', label: 'Schnitt', type: 'multi', options: [...new Set(Object.values(SCHNITTE).flat())], wide: true, custom: true, neu: 'neuen Schnitt' },
   { key: 'passform', label: 'Passform', type: 'chips', options: ['Zu klein', 'Eng', 'Passend', 'Locker', 'Zu groß'], wide: true },
   { key: 'anzahl', label: 'Anzahl', type: 'count', wide: true, noFilter: true },
-  { key: 'marke', label: 'Marke', type: 'text', defaults: [], wide: true },
-  { key: 'herkunft', label: 'Herkunftsland', type: 'text', wide: true, defaults: LAENDER },
+  { key: 'marke', label: 'Marke', type: 'single', options: [], custom: true, neu: 'neue Marke', wide: true },
+  { key: 'herkunft', label: 'Herkunftsland', type: 'single', options: LAENDER, custom: true, neu: 'neues Herkunftsland', wide: true },
   { key: 'pflege', label: 'Waschhinweise', type: 'multi', groups: PFLEGE, flatGroups: true, icon: true, wide: true, noFilter: true },
-  { key: 'zustand', label: 'Zustand', type: 'chips', options: ZUSTAENDE, wide: true },
+  { key: 'zustand', label: 'Zustand', type: 'single', options: ZUSTAENDE, wide: true },
   // ganz unten im Editor
   { key: 'preis', label: 'Preis', type: 'price', wide: true, noFilter: true, slot: 2 },
   { key: 'kaufdatum', label: 'Kaufdatum', type: 'date', wide: true, noFilter: true, slot: 2 },
   { key: 'link', label: 'Link zum Produkt', type: 'url', wide: true, noFilter: true, slot: 2 },
-  { key: 'lagerort', label: 'Lagerort', type: 'text', defaults: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'], wide: true, slot: 2 },
+  { key: 'lagerort', label: 'Lagerort', type: 'single', options: ['Kleiderschrank', 'Kommode', 'Garderobe', 'Keller', 'Dachboden'], custom: true, neu: 'neuen Lagerort', wide: true, slot: 2 },
 ];
 const FIELD = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
-for (const f of FIELDS) {
+FIELD.anlass = { key: 'anlass', label: 'Anlass', type: 'multi', options: ['Alltag', 'Arbeit', 'Freizeit', 'Sport', 'Outdoor', 'Festlich', 'Urlaub'], custom: true, neu: 'neuen Anlass' };
+for (const f of [...FIELDS, FIELD.anlass]) {
   const all = f.groups ? f.groups.flatMap(([, v]) => v) : f.options;
   if (all) { f.all = all; f.order = new Map(all.map((v, i) => [v, i])); }
 }
 const isMulti = (key) => key === 'anlass' || key === 'jahreszeit' || FIELD[key]?.type === 'multi';
 const hasValue = (v) => v !== undefined && v !== null && v !== '';
-const fieldValues = (it, key) => (isMulti(key) ? (Array.isArray(it[key]) ? it[key] : []) : (hasValue(it[key]) ? [it[key]] : []));
+const fieldValues = (it, key) => (isMulti(key) ? (Array.isArray(it[key]) ? it[key] : hasValue(it[key]) ? [it[key]] : []) : (hasValue(it[key]) ? [it[key]] : []));
 const INPUT_TYPES = ['text', 'price', 'date', 'url', 'count'];           // Felder mit normalem Eingabefeld
 const isInputField = (f) => INPUT_TYPES.includes(f.type);
 const priceFmt = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -2476,6 +2477,7 @@ function openOutfitEditor(id = null) {
   $('#outfitDelete').hidden = !o;
   renderOutfitItems();
   $('#outfitEditor').showModal();
+  autosize($('#outfitForm').elements.onotiz);
   toTop($('#outfitEditor'));
 }
 function renderOutfitChips() {
@@ -2699,6 +2701,13 @@ const careIcon = (v) => PFLEGE_ICON[v] || '';
     top(); requestAnimationFrame(top);
   };
 }
+/** Textfeld so hoch wie sein Inhalt (statt Ziehgriff) */
+function autosize(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight + 2}px`;
+}
+document.addEventListener('input', (e) => { if (e.target.matches?.('textarea.autosize')) autosize(e.target); });
 function onFields(type, fn) { for (const el of document.querySelectorAll('#fieldGrid, #fieldGrid2')) el.addEventListener(type, fn); }
 function fillDatalists() {
   for (const f of FIELDS.filter((x) => x.type === 'text')) {
@@ -2722,7 +2731,7 @@ function renderPickFields() {
     }
     let vals = f.type === 'multi' ? ed.vals[f.key] : (ed.vals[f.key] ? [ed.vals[f.key]] : []);
     if (f.key === 'farben') vals = farbList({ farben: vals, farbRollen: ed.farbRollen });
-    const btn = $(`[data-pick="${f.key}"]`);
+    const btn = $(`#editor [data-pick="${f.key}"]`);
     btn.classList.toggle('empty', !vals.length);
     btn.innerHTML = `<span class="picked">${vals.length
       ? vals.map((v) => `<span class="tag${f.icon ? ' icontag' : ''}">${f.swatch ? swatch(v) : ''}${f.icon ? careIcon(v) : ''}${esc(v)}</span>`).join('')
@@ -2730,6 +2739,9 @@ function renderPickFields() {
   }
   renderAnteile();
   renderFarbRollen();
+  const av = ed.vals.anlass;
+  $('#anlassPick').classList.toggle('empty', !av.length);
+  $('#anlassPick').innerHTML = `<span class="picked">${av.length ? av.map((v) => `<span class="tag">${esc(v)}</span>`).join('') : 'Anlass wählen'}</span><span aria-hidden="true">›</span>`;
 }
 /** Editor: bei mehreren Farben Haupt-/Neben-/Akzentfarbe wählen (erneut tippen = abwählen) */
 function renderFarbRollen() {
@@ -2738,8 +2750,7 @@ function renderFarbRollen() {
   box.hidden = fs.length < 2;
   if (fs.length < 2) return;
   box.innerHTML = fs.map((c) => `<div class="anteil rolle"><span>${swatch(c)} ${esc(c)}</span><span class="rollen">${FARB_ROLLEN.map((r) =>
-    `<button type="button" class="chipbtn${ed.farbRollen[c] === r ? ' active' : ''}" data-rolle="${esc(c)}" data-val="${r}">${FARB_ROLLE_KURZ[r]}</button>`).join('')}</span></div>`).join('')
-    + '<p class="hint">Optional: Was überwiegt? Bei der Suche nach einer Farbe kommen Teile, bei denen sie Hauptfarbe ist, zuerst.</p>';
+    `<button type="button" class="chipbtn${ed.farbRollen[c] === r ? ' active' : ''}" data-rolle="${esc(c)}" data-val="${r}">${FARB_ROLLE_KURZ[r]}</button>`).join('')}</span></div>`).join('');
 }
 /** Editor: Anteile in Prozent je gewähltem Material */
 function renderAnteile() {
@@ -2766,7 +2777,7 @@ let optOpen = -1; // aufgeklappte Gruppe (nur bei Feldern mit Gruppen, z. B. Gr�
 /** Schnitte für eine Oberkategorie: feste Liste + selbst angelegte, die bei Teilen dieser Kategorie vorkommen */
 function schnittOptions(kat) {
   const base = SCHNITTE[kat] || [];
-  const extra = [...valuesFor('schnitt', [...items, ...wishes, ...trashItems].filter((i) => i.kategorie === kat)).keys(), ...(ed?.vals.schnitt ? [ed.vals.schnitt] : [])]
+  const extra = [...valuesFor('schnitt', [...items, ...wishes, ...trashItems].filter((i) => i.kategorie === kat)).keys(), ...asList(ed?.vals.schnitt)]
     .filter((v) => !base.includes(v));
   return [...base, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
 }
@@ -2774,8 +2785,9 @@ const hasSchnitt = (kat) => !!SCHNITTE[kat];
 function optionsOf(key) {
   const f = FIELD[key];
   if (key === 'schnitt') return schnittOptions(ed?.kat?.kategorie);
+  if (key === 'anlass') return [...allAnlaesse(asList(ed?.vals.anlass))];
   if (!f.custom) return f.options;
-  const extra = [...valuesFor(key, [...items, ...wishes, ...trashItems]).keys(), ...(ed?.vals[key] || [])].filter((v) => !f.order.has(v));
+  const extra = [...valuesFor(key, [...items, ...wishes, ...trashItems]).keys(), ...asList(ed?.vals[key])].filter((v) => !f.order.has(v));
   return [...f.options, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
 }
 function openOptions(key) {
@@ -2792,9 +2804,9 @@ function openOptions(key) {
 }
 /** Waschhinweise, die bei anderen Teilen oft vorkommen (bei mind. 2 Teilen und mind. 20 % der Teile mit Waschhinweisen):
  *  höchstens die 20 häufigsten, angezeigt in der üblichen Reihenfolge der Liste */
-/** Häufig verwendete Waschhinweise als Gruppen für die Auswahl.
- *  Zuerst die, die bei Teilen der gleichen Unterkategorie (bei zu wenigen Daten: der gleichen Kategorie) häufig sind,
- *  danach die übrigen häufigen aller Teile – zusammen höchstens 20, je Gruppe in der üblichen Reihenfolge.
+/** Häufig verwendete Waschhinweise als eine Gruppe für die Auswahl (höchstens 20, in der üblichen Reihenfolge).
+ *  Bevorzugt (immer dabei) sind die, die bei Teilen der gleichen Unterkategorie (bei zu wenigen Daten: der gleichen
+ *  Kategorie) häufig sind; die übrigen Plätze füllen die häufigsten aller Teile.
  *  „Häufig“ = bei mind. 2 Teilen und mind. 20 % der betrachteten Teile mit Waschhinweisen. */
 function frequentGroups(key, max = 20) {
   const order = (a, b) => (FIELD[key].order.get(a) ?? 1e9) - (FIELD[key].order.get(b) ?? 1e9);
@@ -2803,21 +2815,18 @@ function frequentGroups(key, max = 20) {
     const min = Math.max(2, Math.ceil(pool.length * 0.2));
     return [...valuesFor(key, pool).entries()].filter(([, n]) => n >= min).sort((a, b) => b[1] - a[1] || order(a[0], b[0])).map(([v]) => v);
   };
-  let catTop = [], catName = '';
+  let catTop = [];
   for (const k of ['unterkategorie', 'kategorie']) {
     const v = ed?.kat?.[k];
     if (!v) continue;
     const pool = recs.filter((it) => it[k] === v);
     if (pool.length < 3) continue; // zu wenige Teile für eine Aussage
     catTop = frequent(pool).slice(0, max);
-    catName = v;
     break;
   }
   const rest = frequent(recs).filter((v) => !catTop.includes(v)).slice(0, max - catTop.length);
-  const groups = [];
-  if (catTop.length) groups.push([`Häufig bei ${catName}`, catTop.sort(order)]);
-  if (rest.length) groups.push([catTop.length ? 'Häufig bei anderen Teilen' : 'Häufig verwendet', rest.sort(order)]);
-  return groups;
+  const all = [...catTop, ...rest].sort(order);
+  return all.length ? [['Häufig verwendet', all]] : [];
 }
 function renderOptions() {
   const f = FIELD[optKey];
@@ -2858,7 +2867,6 @@ function chipsHtml(options, selected, attr) {
   return [...options].map((a) => `<button type="button" class="chipbtn${selected.has(a) ? ' active' : ''}" data-${attr}="${esc(a)}">${esc(a)}</button>`).join('');
 }
 function renderAnlass() {
-  $('#anlassChips').innerHTML = chipsHtml(allAnlaesse(ed.anlass), ed.anlass, 'anlass');
   $('#seasonChips').innerHTML = chipsHtml(JAHRESZEITEN, ed.jahreszeit, 'season');
 }
 function renderPhotoStrip() {
@@ -2976,10 +2984,9 @@ function openEditor(id = null, copyId = null) {
     strip: '#photoStrip',
     photos: photosFrom(orig),
     removed: [],
-    anlass: new Set(it?.anlass || []),
     jahreszeit: new Set(it?.jahreszeit || []),
     kat: { kategorie: it?.kategorie || '', unterkategorie: it?.unterkategorie || '', typ: it?.typ || '' },
-    vals: Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])),
+    vals: { ...Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])), anlass: [...(it?.anlass || [])] },
     alt: { ...(it?.alt || {}) },
     anteile: { ...(it?.materialAnteile || {}) },
     farbRollen: { ...(it?.farbRollen || {}) },
@@ -3010,6 +3017,7 @@ function openEditor(id = null, copyId = null) {
   renderPhotoStrip();
   $('#editor').showModal();
   toTop($('#editor'));
+  autosize(form.elements.notiz);
 }
 
 async function saveEditor() {
@@ -3020,7 +3028,7 @@ async function saveEditor() {
     ...(prev || {}),
     id: ed.id,
     name: form.elements.bezeichnung.value.trim(),
-    anlass: [...ed.anlass],
+    anlass: [...ed.vals.anlass],
     jahreszeit: JAHRESZEITEN.filter((j) => ed.jahreszeit.has(j)),
     notiz: form.elements.notiz.value.trim(),
     status: ed.status || '',
@@ -4707,27 +4715,13 @@ function wireEvents() {
     await trackPhoto(addPhotos(files));
   });
   wireDrop();
-  $('#anlassChips').addEventListener('click', (e) => {
-    const a = e.target.dataset.anlass;
-    if (!a) return;
-    ed.anlass.has(a) ? ed.anlass.delete(a) : ed.anlass.add(a);
-    renderAnlass();
-  });
-  const addAnlass = () => {
-    const v = $('#anlassNew').value.trim();
-    if (!v) return;
-    ed.anlass.add(v);
-    $('#anlassNew').value = '';
-    renderAnlass();
-  };
-  $('#anlassAdd').addEventListener('click', addAnlass);
+  $('#anlassPick').addEventListener('click', () => openOptions('anlass'));
   $('#seasonChips').addEventListener('click', (e) => {
     const j = e.target.dataset.season;
     if (!j) return;
     ed.jahreszeit.has(j) ? ed.jahreszeit.delete(j) : ed.jahreszeit.add(j);
     renderAnlass();
   });
-  $('#anlassNew').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addAnlass(); } });
   $('#deleteBtn').addEventListener('click', async () => {
     const id = ed.id;
     ed = null;

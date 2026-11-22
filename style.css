@@ -800,3 +800,11 @@ body.filtering #filters [data-reset-filters] { display: none; }
 /* Passform: fünf Auswahlknöpfe in einer Zeile */
 #chips-passform { flex-wrap: nowrap; gap: 4px; }
 #chips-passform .chipbtn { flex: 1 1 0; min-width: 0; padding: 6px 2px; font-size: 13px; text-align: center; }
+
+/* Notiz: so hoch wie der Inhalt, kein Ziehgriff */
+textarea.autosize { resize: none; overflow: hidden; }
+/* Anzahl: kompakter */
+.fieldgrid .field[data-field="anzahl"] { margin-bottom: 0; }
+.unit.count { gap: 6px; }
+.unit.count .chipbtn { padding: 3px 12px; font-size: 16px; line-height: 1.2; }
+.unit.count input { width: 48px; padding: 5px 4px; }
