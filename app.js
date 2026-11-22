@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.30.0';
+const APP_VERSION = '2.30.1';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2005,11 +2005,12 @@ function filterSelectsHtml(fState, withStatus = true, base = items) {
     } else {
       vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
     }
-    const none = f.key === 'kategorie' ? pool.filter((i) => !i.kategorie).length : 0;
+    // Teile ohne Angabe in diesem Feld: als „Nichts eingetragen“ wählbar
+    const none = pool.filter((i) => !fieldValues(i, f.key).length).length;
     if (none) vals.push([CAT_NONE, none]);
     const sel = asList(fState[f.key]);
     for (const v of sel) if (!vals.some(([x]) => x === v)) vals.push([v, 0]);
-    return dropHtml(f.key, f.label, vals, sel, { swatches: !!f.swatch, names: { [CAT_NONE]: 'Nicht zugeordnet' } });
+    return dropHtml(f.key, f.label, vals, sel, { swatches: !!f.swatch, names: { [CAT_NONE]: 'Nichts eingetragen' } });
   }).join('') + (wish ? `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${fState.fav === 'ja' ? ' selected' : ''}>Nur Favoriten (${wishes.filter((i) => i.favorit).length})</option></select></label>`
     : specialFiltersHtml(fState, withStatus)) + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
 }
@@ -2068,11 +2069,11 @@ function matchFilters(it, fState, skip = null) {
   if (!matchSpecial(it, skip && SPECIAL_KEYS.includes(skip) ? { ...fState, [skip]: '' } : fState)) return false;
   for (const [k, v] of Object.entries(fState)) {
     if (!v || k === skip || SPECIAL_KEYS.includes(k)) continue;
-    if (v === CAT_NONE) { if (it[k]) return false; continue; }
+    if (v === CAT_NONE) { if (fieldValues(it, k).length) return false; continue; }
     const vals = fieldValues(it, k);
     if (OPEN_KEYS.includes(k) && !vals.length) continue;
     // Mehrfachauswahl (Farben): passt, wenn das Teil mindestens eine der gewählten Farben hat
-    if (Array.isArray(v)) { if (v.length && !v.some((x) => (x === CAT_NONE ? !it[k] : vals.includes(x)))) return false; continue; }
+    if (Array.isArray(v)) { if (v.length && !v.some((x) => (x === CAT_NONE ? !vals.length : vals.includes(x)))) return false; continue; }
     if (!vals.includes(v)) return false;
   }
   return true;
@@ -2380,15 +2381,17 @@ function collageHtml(o, big = false, usePhoto = true) {
 const outfitFilters = JSON.parse(localStorage.getItem('ks_ofilters') || '{}');
 function matchOutfit(o, fs, skip = null) {
   return Object.entries(fs).every(([k, v]) => !v || k === skip || (k === 'fav' ? !!o.favorit : k === 'wetter' ? todayMax() === null || fitsToday(o)
-    : !(o[k] || []).length && OPEN_KEYS.includes(k) ? true : asList(v).some((x) => (o[k] || []).includes(x))));
+    : !(o[k] || []).length && OPEN_KEYS.includes(k) ? true : asList(v).some((x) => (x === CAT_NONE ? !(o[k] || []).length : (o[k] || []).includes(x)))));
 }
 function outfitFilterHtml() {
   return [{ key: 'anlass', label: 'Anlass' }, SEASON_DEF].map((f) => {
     const vals = [...valuesFor(f.key, outfits.filter((o) => matchOutfit(o, outfitFilters, f.key))).entries()];
     if (f.order) vals.sort((a, b) => (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9)); else vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
+    const none = outfits.filter((o) => matchOutfit(o, outfitFilters, f.key) && !(o[f.key] || []).length).length;
+    if (none) vals.push([CAT_NONE, none]);
     const sel = asList(outfitFilters[f.key]);
     for (const v of sel) if (!vals.some(([x]) => x === v)) vals.push([v, 0]);
-    return dropHtml(f.key, f.label, vals, sel);
+    return dropHtml(f.key, f.label, vals, sel, { names: { [CAT_NONE]: 'Nichts eingetragen' } });
   }).join('') + `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${outfitFilters.fav === 'ja' ? ' selected' : ''}>Nur Favoriten (${outfits.filter((o) => o.favorit).length})</option></select></label>`
     + wxSelect(outfitFilters.wetter || '', outfits.filter(fitsToday).length)
     + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
@@ -2775,13 +2778,15 @@ function openOptions(key) {
   $('#optDlg').showModal();
   ($('#optList .ochip.active') || $('#optList .kl2.open'))?.scrollIntoView({ block: 'center' });
 }
-/** Waschhinweise, die bei anderen Teilen oft vorkommen (bei mind. 2 Teilen und mind. 20 % der Teile mit Waschhinweisen), häufigste zuerst */
-function frequentValues(key, max = 12) {
+/** Waschhinweise, die bei anderen Teilen oft vorkommen (bei mind. 2 Teilen und mind. 20 % der Teile mit Waschhinweisen):
+ *  höchstens die 20 häufigsten, angezeigt in der üblichen Reihenfolge der Liste */
+function frequentValues(key, max = 20) {
   const recs = [...items, ...wishes].filter((it) => it.id !== ed?.id && fieldValues(it, key).length);
   const min = Math.max(2, Math.ceil(recs.length * 0.2));
   return [...valuesFor(key, recs).entries()].filter(([, n]) => n >= min)
     .sort((a, b) => b[1] - a[1] || (FIELD[key].order.get(a[0]) ?? 1e9) - (FIELD[key].order.get(b[0]) ?? 1e9))
-    .slice(0, max).map(([v]) => v);
+    .slice(0, max).map(([v]) => v)
+    .sort((a, b) => (FIELD[key].order.get(a) ?? 1e9) - (FIELD[key].order.get(b) ?? 1e9));
 }
 function renderOptions() {
   const f = FIELD[optKey];
@@ -3107,13 +3112,16 @@ function matchSpecial(it, f) {
 function specialFiltersHtml(f, withStatus) {
   const sel = (key, label, opts) => `<label>${label}<select data-filter="${key}">${opts.map(([v, t]) =>
     `<option value="${v}"${(f[key] || '') === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
-  const count = (fn) => items.filter((it) => !it.status && fn(it)).length;
+  // Anzahl je Option: Teile, die zu allen übrigen Filtern passen (dieser Filter selbst bleibt außen vor)
+  const count = (key, fn = () => true) => items.filter((it) => matchFilters(it, key === 'status' ? { ...f, status: '*' } : f, key) && fn(it)).length;
+  const notSince = (d) => (it) => !lastWorn(it) || daysSince(lastWorn(it)) >= d;
   const favSel = (cur, n) => `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${cur === 'ja' ? ' selected' : ''}>Nur Favoriten (${n})</option></select></label>`;
-  return favSel(f.fav || '', count((i) => i.favorit)) + (withStatus ? dropHtml('status', 'Status', [[IN_SCHRANK, count(() => true)], ...STATUS.map((s) => [s, items.filter((i) => i.status === s).length])],
+  return favSel(f.fav || '', count('fav', (i) => i.favorit)) + (withStatus ? dropHtml('status', 'Status', [[IN_SCHRANK, count('status', (i) => !i.status)], ...STATUS.map((s) => [s, count('status', (i) => i.status === s)])],
       statusSel(f), { names: { [IN_SCHRANK]: 'Im Schrank' }, noClear: true }) : '')
-    + sel('waesche', 'Wäsche', [['', 'Alle'], ['ja', `In der Wäsche (${count((i) => washN(i))})`], ['nein', 'Verfügbar (nicht in der Wäsche)']])
-    + wxSelect(f.wetter || '', count(fitsToday))
-    + sel('getragen', 'Getragen', [['', 'Alle'], ['nie', `Noch nie (${count((i) => !wornCount(i))})`], ['30', 'Seit 1 Monat nicht'], ['90', 'Seit 3 Monaten nicht'], ['180', 'Seit 6 Monaten nicht'], ['365', 'Seit 1 Jahr nicht']]);
+    + sel('waesche', 'Wäsche', [['', `Alle (${count('waesche')})`], ['ja', `In der Wäsche (${count('waesche', (i) => washN(i))})`], ['nein', `Verfügbar (nicht in der Wäsche) (${count('waesche', (i) => !washAll(i))})`]])
+    + wxSelect(f.wetter || '', count('wetter', fitsToday))
+    + sel('getragen', 'Getragen', [['', `Alle (${count('getragen')})`], ['nie', `Noch nie (${count('getragen', (i) => !wornCount(i))})`],
+      ...[['30', 'Seit 1 Monat nicht'], ['90', 'Seit 3 Monaten nicht'], ['180', 'Seit 6 Monaten nicht'], ['365', 'Seit 1 Jahr nicht']].map(([d, t]) => [d, `${t} (${count('getragen', notSince(Number(d)))})`])]);
 }
 
 /** Datensatz ändern (Teil, Outfit, Packliste) und zum Hochladen vormerken */
