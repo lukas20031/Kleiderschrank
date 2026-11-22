@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.29.2';
+const APP_VERSION = '2.30.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -1998,40 +1998,59 @@ function filterSelectsHtml(fState, withStatus = true, base = items) {
         return CAT.order.get(f.key === 'kategorie' ? v : f.key === 'unterkategorie' ? `${sample.kategorie}|${v}` : `${sample.kategorie}|${sample.unterkategorie}|${v}`) ?? 1e9;
       };
       vals.sort((a, b) => rank(a[0]) - rank(b[0]));
+    } else if (f.swatch) {
+      vals.sort((a, b) => b[1] - a[1] || (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9)); // Farben: häufigste zuerst
     } else if (f.order) {
       vals.sort((a, b) => (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9));
     } else {
       vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
     }
-    const cur = fState[f.key] || '';
-    if (cur && cur !== CAT_NONE && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
     const none = f.key === 'kategorie' ? pool.filter((i) => !i.kategorie).length : 0;
-    if (f.swatch) {
-      // Farben: aufklappbare Liste mit Farbkreisen und Mehrfachauswahl, die häufigste zuerst
-      const sel = asList(fState[f.key]);
-      const list = [...vals.filter(([v]) => v !== cur)];
-      for (const v of sel) if (!list.some(([x]) => x === v)) list.push([v, 0]);
-      list.sort((a, b) => b[1] - a[1] || (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9));
-      const open = openDrop === f.key;
-      const summary = sel.length ? `<span class="dots">${sel.map(swatch).join('')}</span>${esc(sel.join(', '))}` : 'Alle';
-      return `<div class="fdrop${open ? ' open' : ''}"><span class="flabel">${esc(f.label)}</span>
-        <button type="button" class="fdropbtn" data-fdrop="${f.key}" aria-expanded="${open}">${summary}</button>
-        ${open ? `<div class="fdroplist">${list.map(([v, n]) => `<button type="button" class="frow${sel.includes(v) ? ' on' : ''}" data-fchip="${f.key}" data-val="${esc(v)}" aria-pressed="${sel.includes(v)}">
-          <span class="fcheck"></span>${swatch(v)}<span class="fname">${esc(v)}</span><small>${n}</small></button>`).join('') || '<p class="muted">Keine Farben</p>'}
-          ${sel.length ? `<button type="button" class="frow fclear" data-fchip-clear="${f.key}">Auswahl aufheben</button>` : ''}</div>` : ''}</div>`;
-    }
-    return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
-      vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')
-    }${none ? `<option value="${CAT_NONE}"${cur === CAT_NONE ? ' selected' : ''}>Nicht zugeordnet (${none})</option>` : ''}</select></label>`;
+    if (none) vals.push([CAT_NONE, none]);
+    const sel = asList(fState[f.key]);
+    for (const v of sel) if (!vals.some(([x]) => x === v)) vals.push([v, 0]);
+    return dropHtml(f.key, f.label, vals, sel, { swatches: !!f.swatch, names: { [CAT_NONE]: 'Nicht zugeordnet' } });
   }).join('') + (wish ? `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${fState.fav === 'ja' ? ' selected' : ''}>Nur Favoriten (${wishes.filter((i) => i.favorit).length})</option></select></label>`
     : specialFiltersHtml(fState, withStatus)) + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
 }
-/** Filterwert ändern; übergeordnete Kategorie setzt Unterkategorie/Art zurück */
+let dropQuery = ''; // Suchtext in der aufgeklappten Filterliste
+const DROP_SEARCH_MIN = 5; // ab so vielen Einträgen gibt es ein Suchfeld
+/** Aufklappbare Filterliste mit Mehrfachauswahl (Einträge: [Wert, Anzahl]); bei längeren Listen mit Suchfeld */
+function dropHtml(key, label, list, sel, { swatches = false, names = {}, empty = 'Alle', noClear = false } = {}) {
+  const open = openDrop === key;
+  const name = (v) => names[v] || v;
+  const summary = sel.length ? `${swatches ? `<span class="dots">${sel.filter((v) => FARB_MAP.has(v)).map(swatch).join('')}</span>` : ''}${esc(sel.map(name).join(', '))}` : esc(empty);
+  let body = '';
+  if (open) {
+    const q = fold(dropQuery.trim());
+    let any = false;
+    const rows = list.map(([v, n]) => {
+      const fname = fold(name(v));
+      const hit = !q || fname.includes(q);
+      any ||= hit;
+      return `<button type="button" class="frow${sel.includes(v) ? ' on' : ''}" data-fchip="${key}" data-val="${esc(v)}" data-fname="${esc(fname)}" aria-pressed="${sel.includes(v)}"${hit ? '' : ' hidden'}>
+          <span class="fcheck"></span>${swatches && FARB_MAP.has(v) ? swatch(v) : ''}<span class="fname">${esc(name(v))}</span><small>${n}</small></button>`;
+    }).join('');
+    const search = list.length >= DROP_SEARCH_MIN
+      ? `<input type="search" class="fdropsearch" data-fsearch="${key}" placeholder="${esc(label)} durchsuchen …" value="${esc(dropQuery)}" autocomplete="off" enterkeyhint="done">` : '';
+    body = `<div class="fdroplist">${search}${rows}<p class="muted fnohit"${list.length && any ? ' hidden' : ''}>${list.length ? 'Nichts gefunden' : 'Keine Einträge'}</p>
+          ${sel.length && !noClear ? `<button type="button" class="frow fclear" data-fchip-clear="${key}">Auswahl aufheben</button>` : ''}</div>`;
+  }
+  return `<div class="fdrop${open ? ' open' : ''}"><span class="flabel">${esc(label)}</span>
+        <button type="button" class="fdropbtn" data-fdrop="${key}" aria-expanded="${open}">${summary}</button>${body}</div>`;
+}
+/** Filterwert ändern. Bei Kategorie/Unterkategorie fallen darunter gewählte Werte weg, die nicht mehr dazu passen. */
 function setFilter(fState, k, v) {
   if (Array.isArray(v) && !v.length) v = '';
   if (v === '' || v === undefined) delete fState[k]; else fState[k] = v;
-  if (k === 'kategorie') { delete fState.unterkategorie; delete fState.typ; }
-  if (k === 'unterkategorie') delete fState.typ;
+  for (const [parent, child] of [['kategorie', 'unterkategorie'], ['unterkategorie', 'typ']]) {
+    const ps = asList(fState[parent]);
+    if (!fState[child]) continue;
+    if (!ps.length) continue;
+    const ok = new Set([...items, ...wishes].filter((i) => ps.includes(i[parent]) || (ps.includes(CAT_NONE) && !i[parent])).map((i) => i[child]));
+    const keep = asList(fState[child]).filter((x) => x === CAT_NONE || ok.has(x));
+    if (keep.length) fState[child] = Array.isArray(fState[child]) ? keep : keep[0]; else delete fState[child];
+  }
 }
 
 function renderFilters() {
@@ -2053,7 +2072,7 @@ function matchFilters(it, fState, skip = null) {
     const vals = fieldValues(it, k);
     if (OPEN_KEYS.includes(k) && !vals.length) continue;
     // Mehrfachauswahl (Farben): passt, wenn das Teil mindestens eine der gewählten Farben hat
-    if (Array.isArray(v)) { if (v.length && !v.some((x) => vals.includes(x))) return false; continue; }
+    if (Array.isArray(v)) { if (v.length && !v.some((x) => (x === CAT_NONE ? !it[k] : vals.includes(x)))) return false; continue; }
     if (!vals.includes(v)) return false;
   }
   return true;
@@ -2062,11 +2081,14 @@ function matchFilters(it, fState, skip = null) {
 function onFilterDrop(e, st) {
   const t = e.target;
   const d = t.closest('[data-fdrop]');
-  if (d) { openDrop = openDrop === d.dataset.fdrop ? null : d.dataset.fdrop; return true; }
+  if (d) { openDrop = openDrop === d.dataset.fdrop ? null : d.dataset.fdrop; dropQuery = ''; return true; }
   const fc = t.closest('[data-fchip]');
   if (fc) {
-    const k = fc.dataset.fchip, v = fc.dataset.val, cur = asList(st[k]);
-    setFilter(st, k, cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v]);
+    const k = fc.dataset.fchip, v = fc.dataset.val, cur = k === 'status' ? statusSel(st) : asList(st[k]);
+    let next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v];
+    // Status: nur „Im Schrank“ (oder nichts) = Standard
+    if (k === 'status' && (!next.length || (next.length === 1 && next[0] === IN_SCHRANK))) next = '';
+    setFilter(st, k, next);
     return true;
   }
   const cl = t.closest('[data-fchip-clear]');
@@ -2358,16 +2380,15 @@ function collageHtml(o, big = false, usePhoto = true) {
 const outfitFilters = JSON.parse(localStorage.getItem('ks_ofilters') || '{}');
 function matchOutfit(o, fs, skip = null) {
   return Object.entries(fs).every(([k, v]) => !v || k === skip || (k === 'fav' ? !!o.favorit : k === 'wetter' ? todayMax() === null || fitsToday(o)
-    : !(o[k] || []).length && OPEN_KEYS.includes(k) ? true : (o[k] || []).includes(v)));
+    : !(o[k] || []).length && OPEN_KEYS.includes(k) ? true : asList(v).some((x) => (o[k] || []).includes(x))));
 }
 function outfitFilterHtml() {
   return [{ key: 'anlass', label: 'Anlass' }, SEASON_DEF].map((f) => {
     const vals = [...valuesFor(f.key, outfits.filter((o) => matchOutfit(o, outfitFilters, f.key))).entries()];
     if (f.order) vals.sort((a, b) => (f.order.get(a[0]) ?? 1e9) - (f.order.get(b[0]) ?? 1e9)); else vals.sort((a, b) => a[0].localeCompare(b[0], 'de'));
-    const cur = outfitFilters[f.key] || '';
-    if (cur && !vals.some(([v]) => v === cur)) vals.unshift([cur, 0]);
-    return `<label>${esc(f.label)}<select data-filter="${f.key}"><option value="">Alle</option>${
-      vals.map(([v, n]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${n})</option>`).join('')}</select></label>`;
+    const sel = asList(outfitFilters[f.key]);
+    for (const v of sel) if (!vals.some(([x]) => x === v)) vals.push([v, 0]);
+    return dropHtml(f.key, f.label, vals, sel);
   }).join('') + `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${outfitFilters.fav === 'ja' ? ' selected' : ''}>Nur Favoriten (${outfits.filter((o) => o.favorit).length})</option></select></label>`
     + wxSelect(outfitFilters.wetter || '', outfits.filter(fitsToday).length)
     + '<button type="button" class="chipbtn reset" data-reset-filters>Zurücksetzen</button>';
@@ -2754,12 +2775,22 @@ function openOptions(key) {
   $('#optDlg').showModal();
   ($('#optList .ochip.active') || $('#optList .kl2.open'))?.scrollIntoView({ block: 'center' });
 }
+/** Waschhinweise, die bei anderen Teilen oft vorkommen (bei mind. 2 Teilen und mind. 20 % der Teile mit Waschhinweisen), häufigste zuerst */
+function frequentValues(key, max = 12) {
+  const recs = [...items, ...wishes].filter((it) => it.id !== ed?.id && fieldValues(it, key).length);
+  const min = Math.max(2, Math.ceil(recs.length * 0.2));
+  return [...valuesFor(key, recs).entries()].filter(([, n]) => n >= min)
+    .sort((a, b) => b[1] - a[1] || (FIELD[key].order.get(a[0]) ?? 1e9) - (FIELD[key].order.get(b[0]) ?? 1e9))
+    .slice(0, max).map(([v]) => v);
+}
 function renderOptions() {
   const f = FIELD[optKey];
   const q = $('#optSearch').value.trim().toLowerCase();
   const sel = new Set(fieldValues(ed.vals, optKey));
   $('#optTitle').textContent = f.type === 'multi' && sel.size ? `${f.label} (${sel.size})` : f.label;
-  const groups = f.groups || [[null, optionsOf(optKey)]];
+  let groups = f.groups || [[null, optionsOf(optKey)]];
+  // Waschhinweise: oben noch einmal die bei anderen Teilen häufig verwendeten (nicht beim Suchen, sonst doppelt)
+  if (optKey === 'pflege' && !q) { const top = frequentValues('pflege'); if (top.length) groups = [['Häufig verwendet', top], ...groups]; }
   const chips = (hits) => f.icon
     // Waschhinweise: eine Zeile je Hinweis, mit „?“ für die ausführliche Erklärung
     ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${careIcon(o)}${esc(o)}</button>${
@@ -3051,11 +3082,20 @@ function agoText(s) {
 }
 
 const STATUS = ['Aussortiert', 'Verkauft', 'Verschenkt'];
+const IN_SCHRANK = '__schrank__'; // Status-Filter: Teile ohne Status
+/** Gewählte Status als Liste (ohne Angabe = nur „Im Schrank“; '*' und Einzelwerte aus älteren Versionen) */
+function statusSel(f) {
+  const s = f.status;
+  if (Array.isArray(s)) return s;
+  if (!s) return [IN_SCHRANK];
+  return s === '*' ? [IN_SCHRANK, ...STATUS] : [s];
+}
 const SPECIAL_KEYS = ['status', 'waesche', 'getragen', 'fav', 'wetter'];
 /** Status: leer = nur Teile im Schrank, „*“ = alle; Wäsche: ja/nein; Getragen: nie oder seit N Tagen nicht */
 function matchSpecial(it, f) {
   const st = f.status || '';
-  if (st === '') { if (it.status) return false; } else if (st !== '*' && it.status !== st) return false;
+  if (Array.isArray(st)) { if (st.length && !st.includes(it.status || IN_SCHRANK)) return false; }
+  else if (st === '') { if (it.status) return false; } else if (st !== '*' && it.status !== st) return false;
   if (f.fav === 'ja' && !it.favorit) return false;
   if (f.wetter === 'heute' && todayMax() !== null && !fitsToday(it)) return false;
   if (f.waesche === 'ja' && !washN(it)) return false;
@@ -3069,7 +3109,8 @@ function specialFiltersHtml(f, withStatus) {
     `<option value="${v}"${(f[key] || '') === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
   const count = (fn) => items.filter((it) => !it.status && fn(it)).length;
   const favSel = (cur, n) => `<label>Favoriten<select data-filter="fav"><option value="">Alle</option><option value="ja"${cur === 'ja' ? ' selected' : ''}>Nur Favoriten (${n})</option></select></label>`;
-  return favSel(f.fav || '', count((i) => i.favorit)) + (withStatus ? sel('status', 'Status', [['', `Im Schrank (${count(() => true)})`], ...STATUS.map((s) => [s, `${s} (${items.filter((i) => i.status === s).length})`]), ['*', `Alle (${items.length})`]]) : '')
+  return favSel(f.fav || '', count((i) => i.favorit)) + (withStatus ? dropHtml('status', 'Status', [[IN_SCHRANK, count(() => true)], ...STATUS.map((s) => [s, items.filter((i) => i.status === s).length])],
+      statusSel(f), { names: { [IN_SCHRANK]: 'Im Schrank' }, noClear: true }) : '')
     + sel('waesche', 'Wäsche', [['', 'Alle'], ['ja', `In der Wäsche (${count((i) => washN(i))})`], ['nein', 'Verfügbar (nicht in der Wäsche)']])
     + wxSelect(f.wetter || '', count(fitsToday))
     + sel('getragen', 'Getragen', [['', 'Alle'], ['nie', `Noch nie (${count((i) => !wornCount(i))})`], ['30', 'Seit 1 Monat nicht'], ['90', 'Seit 3 Monaten nicht'], ['180', 'Seit 6 Monaten nicht'], ['365', 'Seit 1 Jahr nicht']]);
@@ -4344,6 +4385,23 @@ function wireEvents() {
     if (!$('#filters').hidden) render();
     if ($('#pickDlg').open) renderPicker();
   });
+  document.addEventListener('input', (e) => {
+    const inp = e.target.closest?.('[data-fsearch]');
+    if (!inp) return;
+    dropQuery = inp.value;
+    const q = fold(dropQuery.trim());
+    const box = inp.closest('.fdroplist');
+    let any = false;
+    for (const r of box.querySelectorAll('[data-fname]')) { const hit = !q || r.dataset.fname.includes(q); r.hidden = !hit; any ||= hit; }
+    box.querySelector('.fnohit').hidden = any;
+  });
+  // Enter im Suchfeld wählt den ersten Treffer
+  document.addEventListener('keydown', (e) => {
+    const inp = e.target.closest?.('[data-fsearch]');
+    if (!inp || e.key !== 'Enter') return;
+    e.preventDefault();
+    inp.closest('.fdroplist').querySelector('[data-fname]:not([hidden])')?.click();
+  });
   $('#filters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
     if (!k) return;
@@ -4358,8 +4416,8 @@ function wireEvents() {
     render();
   });
   $('#filters').addEventListener('click', (e) => {
-    if (tab !== 'outfits') {
-      const [st, key] = tab === 'wish' ? [wishFilters, 'ks_wfilters'] : [filters, 'ks_filters'];
+    {
+      const [st, key] = tab === 'outfits' ? [outfitFilters, 'ks_ofilters'] : tab === 'wish' ? [wishFilters, 'ks_wfilters'] : [filters, 'ks_filters'];
       if (onFilterDrop(e, st)) { localStorage.setItem(key, JSON.stringify(st)); return render(); }
     }
     if (!e.target.closest('[data-reset-filters]')) return;
@@ -5068,8 +5126,14 @@ async function renameValueEverywhere(key, from, to) {
   }
   // Gespeicherte Filter mitziehen
   for (const [fs, lsKey] of [[filters, 'ks_filters'], [wishFilters, 'ks_wfilters'], [outfitFilters, 'ks_ofilters']]) {
-    if (fs[key] !== from) continue;
-    if (to) fs[key] = to; else delete fs[key];
+    if (Array.isArray(fs[key])) {
+      if (!fs[key].includes(from)) continue;
+      const nv = [...new Set(fs[key].map((x) => (x === from ? to : x)).filter(Boolean))];
+      if (nv.length) fs[key] = nv; else delete fs[key];
+    } else {
+      if (fs[key] !== from) continue;
+      if (to) fs[key] = to; else delete fs[key];
+    }
     localStorage.setItem(lsKey, JSON.stringify(fs));
   }
   await loadState();

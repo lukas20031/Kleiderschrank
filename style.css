@@ -791,3 +791,8 @@ body.filtering #filters [data-reset-filters] { display: none; }
 .lenski { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; }
 .lenski input { margin: 2px 0 0; }
 .card .lensai { position: absolute; top: 8px; right: 8px; font-size: 11px; background: var(--brand); color: var(--brand-ink); padding: 1px 7px; border-radius: 999px; }
+
+/* Filter: Suche in der aufgeklappten Liste */
+.frow[hidden], .fnohit[hidden] { display: none; }
+.fdropsearch { margin: 4px 8px 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font-size: 16px; position: sticky; top: 0; z-index: 1; }
+.fnohit { padding: 6px 12px; margin: 0; font-size: 13px; }
