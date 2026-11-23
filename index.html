@@ -575,6 +575,21 @@
   </div>
 </dialog>
 
+<!-- Kamera in der App (merkt sich den Blitz) -->
+<dialog id="camDlg" class="camdlg">
+  <video id="camVideo" playsinline muted autoplay></video>
+  <div class="camtop">
+    <button type="button" class="textbtn" data-close>Abbrechen</button>
+    <button type="button" class="chipbtn" id="camFlash" hidden></button>
+  </div>
+  <p id="camMsg" class="cammsg" hidden></p>
+  <div class="cambar">
+    <button type="button" class="chipbtn" id="camSystem">System-Kamera</button>
+    <button type="button" class="shutter" id="camShot" aria-label="Foto aufnehmen"></button>
+    <span></span>
+  </div>
+</dialog>
+
 <div id="toast" class="toast" hidden></div>
 
 <script src="kategorien.js"></script>

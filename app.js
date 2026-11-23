@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.37.0';
+const APP_VERSION = '2.38.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -233,7 +233,7 @@ function normalizeSize(raw) {
   return FIELD.groesse.order.has(v) ? v : null;
 }
 // Umbenannte Materialien: 2.22 „Elasthan“, 2.23 „Polyacryl (Acryl)“
-const PFLEGE_RENAME = { 'Auf links drehen': 'Von links waschen' }; // 2.25.4
+const PFLEGE_RENAME = { 'Auf links drehen': 'Von links waschen', 'Nicht chemisch reinigen': 'Nicht chemisch (trocken) reinigen' }; // 2.25.4, 2.38
 const SCHNITT_RENAME = { Ausgestellt: 'Flared' }; // 2.36
 const MAT_RENAME = { Elastan: 'Elasthan', Acryl: 'Polyacryl (Acryl)', Polyacryl: 'Polyacryl (Acryl)' };
 /** Wert in einem Listenfeld umbenennen (to = '' löscht ihn); bei Materialien auch den Prozentanteil mitnehmen.
@@ -2873,6 +2873,8 @@ let optKey = null;
 let optInfo = null; // aufgeklappte Erklärung (Waschhinweise)
 let optOpen = -1; // aufgeklappte Gruppe (nur bei Feldern mit Gruppen, z. B. Größe)
 let optOpenSet = new Set(); // aufgeklappte Gruppen bei den Waschhinweisen (mehrere gleichzeitig)
+let optParentOpen = new Set(); // aufgeklappte Überkategorien bei der Größe (z. B. „Hose“)
+const GROESSEN_OBER = { Hose: 'Hose (Weite/Länge)', BH: 'BH (Unterbrust/Cup)' }; // Größen-Gruppen „Hose – …“, „BH – …“ stehen darunter
 /** Auswahlwerte eines Felds inkl. selbst angelegter (z. B. eigene Materialien) */
 /** Schnitte für eine Oberkategorie: feste Liste + selbst angelegte, die bei Teilen dieser Kategorie vorkommen */
 function schnittOptions(kat) {
@@ -2882,6 +2884,13 @@ function schnittOptions(kat) {
   return [...base, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
 }
 const hasSchnitt = (kat) => !!SCHNITTE[kat];
+/** Marken: zuerst die in der gleichen Kategorie am häufigsten verwendeten, dann nach Häufigkeit insgesamt, dann alphabetisch */
+function markenOptions(kat) {
+  const all = [...items, ...wishes, ...trashItems].filter((i) => i.id !== ed?.id);
+  const n = valuesFor('marke', all), nk = valuesFor('marke', kat ? all.filter((i) => i.kategorie === kat) : []);
+  const names = [...new Set([...n.keys(), ...asList(ed?.vals.marke)])];
+  return names.sort((a, b) => (nk.get(b) || 0) - (nk.get(a) || 0) || (n.get(b) || 0) - (n.get(a) || 0) || a.localeCompare(b, 'de'));
+}
 /** Größen-Gruppen passend zur Kategorie (GROESSEN_JE_KATEGORIE); eine schon gewählte Größe bleibt immer sichtbar */
 function groessenGroups(kat = {}, selected = '') {
   const J = GROESSEN_JE_KATEGORIE;
@@ -2893,6 +2902,7 @@ function optionsOf(key) {
   const f = FIELD[key];
   if (key === 'schnitt') return schnittOptions(ed?.kat?.kategorie);
   if (key === 'anlass') return [...allAnlaesse(asList(ed?.vals.anlass))];
+  if (key === 'marke') return markenOptions(ed?.kat?.kategorie);
   if (!f.custom) return f.options;
   const extra = [...valuesFor(key, [...items, ...wishes, ...trashItems]).keys(), ...asList(ed?.vals[key])].filter((v) => !f.order.has(v));
   return [...f.options, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
@@ -2907,6 +2917,8 @@ function openOptions(key) {
   const gl = key === 'groesse' ? groessenGroups(ed.kat, ed.vals.groesse) : f.groups;
   optOpen = gl && !f.flatGroups ? gl.findIndex(([, opts]) => opts.some((o) => sel.includes(o))) : -1;
   optOpenSet = new Set(['Häufig verwendet']); // anfangs nur die häufig verwendeten aufgeklappt
+  // Überkategorie (z. B. „Hose (Weite/Länge)“) aufklappen, wenn darin schon etwas gewählt ist
+  optParentOpen = new Set((gl || []).filter(([g, opts]) => g.includes(' – ') && opts.some((o) => sel.includes(o))).map(([g]) => g.split(' – ')[0]));
   renderOptions();
   $('#optDlg').showModal();
   ($('#optList .ochip.active') || $('#optList .kl2.open'))?.scrollIntoView({ block: 'center' });
@@ -2957,16 +2969,30 @@ function renderOptions() {
       optInfo === o ? `<p class="kexpl">${esc(info[o])}</p>` : ''}</div>`).join('')}</div>`
     : `<div class="ochips${f.swatch ? ' swatches' : ''}">${hits.map((o) =>
     `<button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.swatch ? swatch(o) : ''}${esc(o)}</button>`).join('')}</div>`;
+  // Größe: Gruppen wie „Hose – Weite 32“ stehen gesammelt unter einer aufklappbaren Überkategorie
+  let lastParent = null;
   const html = groups.map(([g, opts], gi) => {
     const hits = opts.filter((o) => !q || o.toLowerCase().includes(q) || (g && g.toLowerCase().includes(q)));
     if (!hits.length) return '';
     if (!g) return chips(hits);
     if (staticGroups) return `<h4 class="ogroup">${esc(g)}</h4>${chips(hits)}`;
+    const parent = optKey === 'groesse' && GROESSEN_OBER[g.split(' – ')[0]] ? g.split(' – ')[0] : null;
+    let head = '';
+    if (parent && parent !== lastParent) {
+      const all = groups.filter(([x]) => x.startsWith(`${parent} – `)).flatMap(([, o]) => o);
+      const pPicked = all.filter((o) => sel.has(o));
+      const pOpen = !!q || optParentOpen.has(parent);
+      head = `<button type="button" class="kl2${pOpen ? ' open' : ''}${pPicked.length ? ' chosen' : ''}" data-ogp="${esc(parent)}" aria-expanded="${pOpen}">
+      <span>${esc(GROESSEN_OBER[parent])}${pPicked.length && !pOpen ? `<small>${esc(pPicked.join(', '))}</small>` : ''}</span><span class="chev" aria-hidden="true">›</span></button>`;
+    }
+    lastParent = parent;
+    if (parent && !q && !optParentOpen.has(parent)) return head; // Überkategorie zugeklappt
     // Waschhinweise: jede Gruppe einzeln auf-/zuklappbar (beim Suchen alle offen)
     const open = !!q || (f.flatGroups ? optOpenSet.has(g) : optOpen === gi);
     const picked = opts.filter((o) => sel.has(o));
-    return `<button type="button" class="kl2${open ? ' open' : ''}${picked.length ? ' chosen' : ''}" ${f.flatGroups ? `data-ogf="${esc(g)}"` : `data-og="${gi}"`} aria-expanded="${open}">
-      <span>${esc(g)}${picked.length && !open ? `<small>${esc(picked.join(', '))}</small>` : ''}</span><span class="chev" aria-hidden="true">›</span></button>${open ? chips(hits) : ''}`;
+    const label = parent ? g.slice(parent.length + 3) : g;
+    return `${head}${parent ? '<div class="ogsub">' : ''}<button type="button" class="kl2${open ? ' open' : ''}${picked.length ? ' chosen' : ''}" ${f.flatGroups ? `data-ogf="${esc(g)}"` : `data-og="${gi}"`} aria-expanded="${open}">
+      <span>${esc(label)}${picked.length && !open ? `<small>${esc(picked.join(', '))}</small>` : ''}</span><span class="chev" aria-hidden="true">›</span></button>${open ? chips(hits) : ''}${parent ? '</div>' : ''}`;
   }).join('');
   const raw = $('#optSearch').value.trim();
   const canAdd = f.custom && raw && !optionsOf(optKey).some((o) => o.toLowerCase() === raw.toLowerCase());
@@ -4288,6 +4314,112 @@ function wireDrop() {
   });
 }
 
+/* ---------------- Kamera in der App ----------------
+ * „Foto aufnehmen“ öffnet eine eigene Kamera statt der System-Kamera, damit die App die Blitz-Einstellung der
+ * letzten Aufnahme behalten kann (ks_flash: off | auto | on). Ohne Kamera-Zugriff oder per Knopf geht es weiter
+ * mit der System-Kamera. Das Foto wird dem ursprünglichen Datei-Feld übergeben, die weitere Verarbeitung bleibt gleich. */
+const Cam = { stream: null, track: null, ic: null, fill: [], torch: false, modes: ['off'], input: null, bypass: false };
+const camSupported = () => !!navigator.mediaDevices?.getUserMedia && typeof DataTransfer === 'function';
+const FLASH_LABEL = { off: 'Blitz aus', auto: 'Blitz auto', on: 'Blitz an' };
+const flashMode = () => { const m = localStorage.getItem('ks_flash') || 'off'; return Cam.modes.includes(m) ? m : 'off'; };
+function renderFlash() {
+  const b = $('#camFlash');
+  b.hidden = Cam.modes.length < 2; // Gerät/Browser kann den Blitz nicht steuern
+  b.textContent = `⚡ ${FLASH_LABEL[flashMode()]}`;
+  b.classList.toggle('on', flashMode() !== 'off');
+}
+function camMsg(text) { $('#camMsg').hidden = !text; $('#camMsg').textContent = text || ''; }
+async function openCamera(input) {
+  Cam.input = input;
+  camMsg('');
+  $('#camFlash').hidden = true;
+  $('#camShot').disabled = true;
+  $('#camDlg').showModal();
+  try {
+    Cam.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 4096 }, height: { ideal: 3072 } } });
+  } catch (e) {
+    console.warn('Kamera', e);
+    return camMsg('Die Kamera lässt sich hier nicht öffnen (Zugriff verweigert oder nicht verfügbar). Nutze „System-Kamera“.');
+  }
+  if (!$('#camDlg').open) return stopCamera();
+  Cam.track = Cam.stream.getVideoTracks()[0];
+  const v = $('#camVideo');
+  v.srcObject = Cam.stream;
+  await v.play().catch(() => {});
+  Cam.ic = null; Cam.fill = [];
+  if ('ImageCapture' in window) {
+    try { Cam.ic = new ImageCapture(Cam.track); Cam.fill = (await Cam.ic.getPhotoCapabilities()).fillLightMode || []; } catch { /* ohne Fotomodus */ }
+  }
+  try { Cam.torch = !!Cam.track.getCapabilities?.().torch; } catch { Cam.torch = false; }
+  Cam.modes = ['off', ...(Cam.fill.includes('auto') ? ['auto'] : []), ...(Cam.fill.includes('flash') || Cam.torch ? ['on'] : [])];
+  renderFlash();
+  $('#camShot').disabled = false;
+}
+function stopCamera() {
+  for (const t of Cam.stream?.getTracks() || []) t.stop();
+  Cam.stream = null; Cam.track = null; Cam.ic = null;
+  $('#camVideo').srcObject = null;
+}
+/** Standbild aus der Vorschau (wenn der Browser keine Fotoaufnahme kennt) */
+function grabFrame() {
+  const v = $('#camVideo');
+  const c = newCanvas(v.videoWidth, v.videoHeight);
+  c.getContext('2d').drawImage(v, 0, 0);
+  return toBlob(c, 'image/jpeg', 0.92);
+}
+async function camShoot() {
+  const mode = flashMode();
+  $('#camShot').disabled = true;
+  let blob = null;
+  const torch = async (on) => { try { await Cam.track.applyConstraints({ advanced: [{ torch: on }] }); } catch { /* egal */ } };
+  try {
+    const fillMode = mode === 'on' ? 'flash' : mode;
+    if (Cam.ic && Cam.fill.includes(fillMode)) {
+      blob = await Cam.ic.takePhoto({ fillLightMode: fillMode });
+    } else {
+      // Blitz über die Taschenlampe, falls der Fotomodus ihn nicht kennt
+      if (mode === 'on' && Cam.torch) { await torch(true); await sleep(400); }
+      blob = Cam.ic ? await Cam.ic.takePhoto().catch(() => null) : null;
+      if (!blob) blob = await grabFrame();
+      if (mode === 'on' && Cam.torch) await torch(false);
+    }
+  } catch (e) {
+    console.warn('Aufnahme', e);
+    blob = await grabFrame().catch(() => null);
+  }
+  if (!blob) { $('#camShot').disabled = false; return toast('Foto konnte nicht aufgenommen werden.'); }
+  localStorage.setItem('ks_flash', mode); // Blitz der letzten Aufnahme merken
+  const input = Cam.input;
+  $('#camDlg').close();
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], `foto-${Date.now()}.jpg`, { type: blob.type || 'image/jpeg' }));
+  input.files = dt.files;
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+function wireCamera() {
+  // „Foto aufnehmen“ (alle Datei-Felder mit capture) abfangen und die eigene Kamera öffnen
+  document.addEventListener('click', (e) => {
+    if (Cam.bypass || !camSupported()) return;
+    const input = e.target.matches?.('input[type=file][capture]') ? e.target : e.target.closest?.('label')?.querySelector('input[type=file][capture]');
+    if (!input) return;
+    e.preventDefault();
+    openCamera(input);
+  }, true);
+  $('#camShot').addEventListener('click', camShoot);
+  $('#camFlash').addEventListener('click', () => {
+    const i = Cam.modes.indexOf(flashMode());
+    localStorage.setItem('ks_flash', Cam.modes[(i + 1) % Cam.modes.length]);
+    renderFlash();
+  });
+  $('#camSystem').addEventListener('click', () => {
+    const input = Cam.input;
+    $('#camDlg').close();
+    Cam.bypass = true;
+    try { input.click(); } finally { Cam.bypass = false; }
+  });
+  $('#camDlg').addEventListener('close', stopCamera);
+}
+
 /* ---------------- Einstellungen ---------------- */
 function renderSettings() {
   $('#trashBtn').textContent = `Papierkorb${trashCount() ? ` (${trashCount()})` : ''}`;
@@ -4677,6 +4809,14 @@ function wireEvents() {
   $('#optSearch').addEventListener('input', renderOptions);
   $('#optList').addEventListener('click', (e) => {
     const g = e.target.closest('.kl2');
+    if (g && g.dataset.ogp !== undefined) {
+      const name = g.dataset.ogp;
+      if (optParentOpen.has(name)) optParentOpen.delete(name); else optParentOpen.add(name);
+      const top = $('#optList').scrollTop;
+      renderOptions();
+      $('#optList').scrollTop = top;
+      return;
+    }
     if (g && g.dataset.ogf !== undefined) {
       const name = g.dataset.ogf;
       if (optOpenSet.has(name)) optOpenSet.delete(name); else optOpenSet.add(name);
@@ -5074,6 +5214,7 @@ async function init() {
   buildFieldInputs();
   renderSortOptions();
   wireEvents();
+  wireCamera();
   wirePlanner();
   wireWeather();
   wireTrash();

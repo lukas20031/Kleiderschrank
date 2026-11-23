@@ -166,19 +166,22 @@ const ZUSTAENDE = ['Neu mit Etikett', 'Neu', 'Wie neu', 'Sehr gut', 'Gut', 'Getr
 
 /* Waschhinweise (Pflegesymbole), gruppiert. Symbole als kleine SVGs (24×26, Strichstärke 1.6, currentColor). */
 const PFLEGE = [
-  ['Waschen', ['Nicht waschen', 'Handwäsche', 'Von links waschen', 'Mit ähnlichen Farben waschen']],
+  ['Waschen', ['Nicht waschen', 'Handwäsche', 'Von links waschen', 'Mit ähnlichen Farben waschen', 'Separat waschen']],
   ['Waschtemperatur', ['Waschen bis 30 °C', 'Waschen bis 40 °C', 'Waschen bis 60 °C', 'Waschen bis 95 °C',
     'Niedrige Waschtemperatur', 'Normale Waschtemperatur', 'Hohe Waschtemperatur']],
   ['Schleudern', ['Nicht schleudern', 'Schonend schleudern', 'Max. schleudern']],
   ['Trocknen', ['Nicht in den Trockner', 'Trockner geeignet', 'Schonender Trockengang', 'Sehr schonender Trockengang', 'Schonend trocknen', 'Normal trocknen', 'Heiß trocknen',
     'Trocknen ohne Hitze', 'Nicht wringen', 'Nass in Form ziehen', 'Liegend trocknen', 'Hängend trocknen', 'Im Schatten trocknen', 'Tropfnass trocknen']],
   ['Bügeln', ['Bügeln', 'Nicht bügeln', 'Nicht mit Dampf bügeln', 'Von links bügeln', 'Druck nicht bügeln', 'Stickerei nicht bügeln', 'Knöpfe nicht bügeln', 'Bügeln bei 110 °C', 'Bügeln bei 150 °C', 'Bügeln bei 200 °C']],
-  ['Chemische Reinigung', ['Nicht chemisch reinigen', 'Professionelle Reinigung', 'Reinigung mit Perchlorethylen (P)', 'Reinigung mit Kohlenwasserstoff (F)', 'Alle Lösemittel möglich (A)']],
+  ['Chemische Reinigung (trocken) und Nassreinigung', ['Nicht chemisch (trocken) reinigen', 'Professionelle Reinigung',
+    'Reinigung mit Perchlorethylen (P)', 'Schonende Reinigung mit Perchlorethylen (P)', 'Reinigung mit Kohlenwasserstoff (F)', 'Schonende Reinigung mit Kohlenwasserstoff (F)',
+    'Alle Lösemittel möglich (A)', 'Nicht nassreinigen', 'Nassreinigung (W)', 'Milde Nassreinigung (W)', 'Sehr milde Nassreinigung (W)']],
   ['Bleichen', ['Nicht bleichen', 'Ohne Chlor bleichen', 'Bleichen erlaubt']],
 ];
 /* Ausführlichere Erklärungen (hinter dem „?“) */
 const PFLEGE_INFO = {
-  'Nicht waschen': 'Das Teil darf weder in der Maschine noch von Hand gewaschen werden – meist ist nur chemische Reinigung möglich.',
+  'Nicht waschen': 'Das Teil darf weder in der Maschine noch von Hand gewaschen werden – meist ist nur chemische Reinigung (trocken) möglich.',
+  'Separat waschen': 'Getrennt von anderer Wäsche waschen – das Teil färbt (vor allem in den ersten Wäschen) stark ab oder ist besonders empfindlich.',
   'Handwäsche': 'Nur von Hand waschen, höchstens ca. 40 °C. Nicht reiben oder wringen, sondern sanft drücken; manche Maschinen haben ein Handwäsche-Programm.',
   'Von links waschen': 'Vor dem Waschen auf links (Innenseite nach außen) drehen. Schützt Drucke, Farben und die Oberfläche vor Abrieb und Pilling.',
   'Mit ähnlichen Farben waschen': 'Nur mit Wäsche in ähnlichen Farben waschen – das Teil kann abfärben oder selbst Farbe annehmen.',
@@ -207,7 +210,7 @@ const PFLEGE_INFO = {
   'Nicht wringen': 'Nicht auswringen oder verdrehen, sonst verzieht sich das Teil – Wasser lieber vorsichtig ausdrücken.',
   'Nass in Form ziehen': 'Nach dem Waschen im nassen Zustand vorsichtig in die ursprüngliche Form und Größe ziehen, dann trocknen lassen – verhindert Verziehen und Einlaufen.',
   'Liegend trocknen': 'Flach ausgebreitet trocknen, z. B. auf einem Handtuch – typisch für Strick und Wolle, damit nichts ausleiert.',
-  'Hängend trocknen': 'Auf der Leine oder einem Bügel hängend trocknen.',
+  'Hängend trocknen': 'Auf der Leine oder einem Bügel hängend trocknen. Auf Etiketten als Quadrat mit Bogen oben oder (nach ISO) als Quadrat mit senkrechtem Strich.',
   'Im Schatten trocknen': 'Nicht in der direkten Sonne trocknen, damit die Farben nicht ausbleichen.',
   'Tropfnass trocknen': 'Ohne Schleudern und Auswringen tropfnass aufhängen; glättet sich dabei von selbst.',
   'Bügeln': 'Darf gebügelt werden; zur Temperatur gibt es keine Einschränkung.',
@@ -216,11 +219,17 @@ const PFLEGE_INFO = {
   'Bügeln bei 110 °C': 'Ein Punkt: niedrige Bügeltemperatur (max. 110 °C), z. B. für Synthetik, Acryl oder Seide.',
   'Bügeln bei 150 °C': 'Zwei Punkte: mittlere Bügeltemperatur (max. 150 °C), z. B. für Wolle, Polyester oder Viskose.',
   'Bügeln bei 200 °C': 'Drei Punkte: hohe Bügeltemperatur (max. 200 °C), z. B. für Baumwolle und Leinen.',
-  'Nicht chemisch reinigen': 'Darf nicht in die chemische Reinigung.',
-  'Professionelle Reinigung': 'Leerer Kreis: Das Teil darf professionell gereinigt werden (chemisch oder nass) – die Reinigung wählt das passende Verfahren.',
-  'Alle Lösemittel möglich (A)': 'Kreis mit „A“ (veraltet): chemische Reinigung mit allen üblichen Lösemitteln möglich. Steht nur noch auf älteren Etiketten.',
-  'Reinigung mit Perchlorethylen (P)': 'Professionelle chemische Reinigung mit Perchlorethylen und den üblichen Lösemitteln möglich.',
-  'Reinigung mit Kohlenwasserstoff (F)': 'Professionelle Reinigung nur mit schonenden Kohlenwasserstoff-Lösemitteln.',
+  'Nicht chemisch (trocken) reinigen': 'Durchgestrichener Kreis: darf nicht in die chemische Reinigung (trocken). Ob eine Nassreinigung möglich ist, zeigt ggf. ein eigenes „W“-Symbol.',
+  'Professionelle Reinigung': 'Leerer Kreis: Das Teil darf professionell gereinigt werden (chemisch (trocken) oder nass) – die Reinigung wählt das passende Verfahren.',
+  'Alle Lösemittel möglich (A)': 'Kreis mit „A“ (veraltet): chemische Reinigung (trocken) mit allen üblichen Lösemitteln möglich. Steht nur noch auf älteren Etiketten.',
+  'Reinigung mit Perchlorethylen (P)': 'Kreis mit „P“: professionelle chemische Reinigung (trocken) mit Perchlorethylen und den üblichen Lösemitteln möglich.',
+  'Schonende Reinigung mit Perchlorethylen (P)': '„P“ mit Strich darunter: schonende chemische Reinigung (trocken) mit Perchlorethylen – mit weniger Feuchtigkeit, Temperatur und Mechanik.',
+  'Reinigung mit Kohlenwasserstoff (F)': 'Kreis mit „F“: professionelle chemische Reinigung (trocken) nur mit Kohlenwasserstoff-Lösemitteln.',
+  'Schonende Reinigung mit Kohlenwasserstoff (F)': '„F“ mit Strich darunter: schonende chemische Reinigung (trocken) mit Kohlenwasserstoff – mit weniger Feuchtigkeit, Temperatur und Mechanik.',
+  'Nicht nassreinigen': 'Durchgestrichenes „W“: darf nicht in die professionelle Nassreinigung.',
+  'Nassreinigung (W)': 'Kreis mit „W“: professionelle Nassreinigung möglich – die Reinigung wäscht mit Wasser und speziellen Mitteln statt mit Lösemitteln.',
+  'Milde Nassreinigung (W)': '„W“ mit einem Strich darunter: professionelle Nassreinigung im milden Verfahren.',
+  'Sehr milde Nassreinigung (W)': '„W“ mit zwei Strichen darunter: professionelle Nassreinigung im sehr milden Verfahren.',
   'Nicht bleichen': 'Kein Bleichmittel verwenden – auch keine Waschmittel mit Bleiche (z. B. viele Vollwaschmittel bei bunter Wäsche).',
   'Ohne Chlor bleichen': 'Nur sauerstoffbasierte Bleichmittel, kein Chlor.',
   'Bleichen erlaubt': 'Jedes Bleichmittel ist erlaubt, auch Chlorbleiche.',
@@ -269,7 +278,8 @@ const PFLEGE_ICON = (() => {
     'Nicht wringen': '<path d="M2.5 10.5 Q7 7.5 12 12.5 Q17 17.5 21.5 14.5 M2.5 14.5 Q7 17.5 12 12.5 Q17 7.5 21.5 10.5 M2.5 10.5 V14.5 M21.5 10.5 V14.5"/><path d="M7 5 L17 20 M17 5 L7 20"/>',
     'Nass in Form ziehen': '<path d="M9 5 L6 6.6 L7 9.2 L8.3 8.8 V19 H15.7 V8.8 L17 9.2 L18 6.6 L15 5 Q12 6.6 9 5 Z"/><path d="M5.5 14 H1.5 M3 12.5 L1.5 14 L3 15.5 M18.5 14 H22.5 M21 12.5 L22.5 14 L21 15.5"/><path d="M10.5 21.8 q.75-1 1.5 0 t1.5 0" stroke-width="1.1"/>',
     'Liegend trocknen': `${sq}<path d="M8 12.5 H16"/>`,
-    'Hängend trocknen': `${sq}<path d="M6 4.3 Q12 11 18 4.3"/>`,
+    'Hängend trocknen': `${sq}<path d="M6 4.3 Q12 11 18 4.3"/>`, // dazu unten ein zweites Zeichen (Quadrat mit Strich)
+    'Separat waschen': `<path d="${tub}"/><path d="M12 9.5 V19.5" stroke-dasharray="1.6 1.6"/><path d="M7.5 13.5 h2.5 M14 13.5 h2.5"/>`,
     'Im Schatten trocknen': `${sq}<path d="M3.8 9.5 L9 4.3 M3.8 13.5 L13 4.3"/>`,
     'Tropfnass trocknen': `${sq}<path d="M9 8 V17 M12 8 V17 M15 8 V17"/>`,
     'Bügeln': iron,
@@ -278,17 +288,26 @@ const PFLEGE_ICON = (() => {
     'Bügeln bei 110 °C': `${iron}${dots(1, 16, 3, 13)}`,
     'Bügeln bei 150 °C': `${iron}${dots(2, 16, 3, 13)}`,
     'Bügeln bei 200 °C': `${iron}${dots(3, 16, 3, 13)}`,
-    'Nicht chemisch reinigen': `${circ}${x(4.5, 5, 19.5, 20)}`,
+    'Nicht chemisch (trocken) reinigen': `${circ}${x(4.5, 5, 19.5, 20)}`,
     'Professionelle Reinigung': circ,
     'Alle Lösemittel möglich (A)': `${circ}${txt('A', 15.7, 9)}`,
     'Reinigung mit Perchlorethylen (P)': `${circ}${txt('P', 15.7, 9)}`,
     'Reinigung mit Kohlenwasserstoff (F)': `${circ}${txt('F', 15.7, 9)}`,
+    'Schonende Reinigung mit Perchlorethylen (P)': `<circle cx="12" cy="11" r="7.8"/>${txt('P', 14.2, 8.5)}${bars(1, 22.3, 6, 18)}`,
+    'Schonende Reinigung mit Kohlenwasserstoff (F)': `<circle cx="12" cy="11" r="7.8"/>${txt('F', 14.2, 8.5)}${bars(1, 22.3, 6, 18)}`,
+    'Nicht nassreinigen': `${circ}${txt('W', 15.7, 9)}${x(4.5, 5, 19.5, 20)}`,
+    'Nassreinigung (W)': `${circ}${txt('W', 15.7, 9)}`,
+    'Milde Nassreinigung (W)': `<circle cx="12" cy="11" r="7.8"/>${txt('W', 14.2, 8.5)}${bars(1, 22.3, 6, 18)}`,
+    'Sehr milde Nassreinigung (W)': `<circle cx="12" cy="10.3" r="7.3"/>${txt('W', 13.4, 8)}${bars(2, 21.2, 6, 18)}`,
     'Nicht bleichen': `${tri}${x(5, 6, 19, 22)}`,
     'Ohne Chlor bleichen': `${tri}<path d="M10 21 L15 11.5 M13.5 21 L17.2 14"/>`,
     'Bleichen erlaubt': tri,
   };
-  return Object.fromEntries(Object.entries(ic).map(([k, v]) => [k,
-    `<svg class="careicon" viewBox="0 0 24 26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${v}</svg>`]));
+  const svg = (v) => `<svg class="careicon" viewBox="0 0 24 26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${v}</svg>`;
+  const out = Object.fromEntries(Object.entries(ic).map(([k, v]) => [k, svg(v)]));
+  // Hängend trocknen: zusätzlich das ISO-Zeichen (Quadrat mit senkrechtem Strich)
+  out['Hängend trocknen'] += svg(`${sq}<path d="M12 7.5 V17.5"/>`);
+  return out;
 })();
 
 /* Alle Länder (ISO 3166-1) – deutsche Namen über Intl, sortiert */
