@@ -25,7 +25,7 @@ const FARBEN = [
 // Materialien (übernommen aus Whering)
 const MATERIALIEN = [
   'Alpaka', 'Aluminium', 'Bambus', 'Baumwolle', 'Bouclé', 'Bronze', 'Canvas', 'Chiffon', 'Cord', 'Crêpe',
-  'Denim', 'Diamant', 'Edelstahl', 'Edelstein', 'Eisen', 'Elasthan', 'Fell', 'Glas', 'Gold', 'Gummi', 'Hanf', 'Holz',
+  'Daunen', 'Denim', 'Diamant', 'Edelstahl', 'Edelstein', 'Eisen', 'Elasthan', 'Federn', 'Fell', 'Glas', 'Gold', 'Gummi', 'Hanf', 'Holz',
   'Häkelstrick', 'Kaschmir', 'Keramik', 'Kobalt', 'Kunstfell', 'Kupfer', 'Lackleder', 'Leder', 'Leinen', 'Lycra',
   'Lyocell', 'Mesh', 'Messing', 'Metall', 'Modal', 'Neopren', 'Nylon', 'Pailletten', 'Perle', 'Plastik', 'Polyacryl (Acryl)', 'Polyamid',
   'Polyester', 'Polyurethan', 'Rayon', 'Samt', 'Satin', 'Schurwolle', 'Seide', 'Silber', 'Smaragd', 'Spandex', 'Spitze',
@@ -33,25 +33,113 @@ const MATERIALIEN = [
   'Wildleder', 'Wolle', 'Zink',
 ];
 
-// Größen – je Gruppe von klein nach groß
-const jeansGroessen = [];
-for (let w = 26; w <= 40; w++) for (const l of [30, 32, 34, 36]) jeansGroessen.push(`W${w}/L${l}`);
+// Größen – je Gruppe von klein nach groß. Der Teil vor „ – “ ist die Größenart (siehe GROESSEN_JE_KATEGORIE).
 const schuhGroessen = [];
 for (let s = 35; s <= 48; s += 0.5) schuhGroessen.push(String(s).replace('.', ','));
+const hosenGroessen = []; // je Weite eine Gruppe mit den Längen
+for (let w = 26; w <= 40; w++) hosenGroessen.push([`Hose – Weite ${w}`, [28, 30, 32, 34, 36].map((l) => `W${w}/L${l}`)]);
+const bhGroessen = []; // EU: Unterbrustweite (cm) + Cup, je Unterbrustweite eine Gruppe
+for (let u = 60; u <= 110; u += 5) bhGroessen.push([`BH – Unterbrust ${u}`, ['AA', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((c) => `${u}${c}`)]);
+// Ringgröße (DE) = Innenumfang in mm; „Ring 54“, damit sie sich nicht mit Konfektionsgrößen vermischt
+const ringGroessen = Array.from({ length: 29 }, (_, i) => `Ring ${44 + i}`);
 const GROESSEN = [
   ['Allgemein', ['Einheitsgröße']],
   ['Buchstaben', ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL']],
   ['Konfektionsgröße', Array.from({ length: 16 }, (_, i) => String(32 + i * 2))],
-  ['Jeans (Weite/Länge)', jeansGroessen],
+  ...hosenGroessen,
+  ['Gürtellänge', Array.from({ length: 13 }, (_, i) => `${70 + i * 5} cm`)],
+  ...bhGroessen,
+  ['Ringgröße', ringGroessen],
   ['Schuhe (EU)', schuhGroessen],
 ];
+// Welche Größenarten bei welcher Kategorie zur Auswahl stehen. Genauere Angaben gehen vor:
+// „Kategorie › Unterkategorie › Art“ vor „Kategorie › Unterkategorie“ vor „Kategorie“.
+// Ohne Kategorie oder ohne Eintrag hier: alle.
+const GROESSEN_JE_KATEGORIE = {
+  'Oberteile': ['Allgemein', 'Buchstaben', 'Konfektionsgröße'],
+  'Unterteile': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'Hose'],
+  'Unterteile › Röcke': ['Allgemein', 'Buchstaben', 'Konfektionsgröße'],
+  'Outdoorbekleidung': ['Allgemein', 'Buchstaben', 'Konfektionsgröße'],
+  'Ganzkörper': ['Allgemein', 'Buchstaben', 'Konfektionsgröße'],
+  'Ganzkörper › Arbeitskleidung': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'Hose'],
+  'Unterwäsche & Nachtwäsche': ['Allgemein', 'Buchstaben', 'Konfektionsgröße'],
+  'Taschen': ['Allgemein'],
+  'Accessoires': ['Allgemein', 'Buchstaben'],
+  'Accessoires › Gürtel': ['Allgemein', 'Gürtellänge', 'Buchstaben'],
+  'Accessoires › Socken und Strumpfhosen': ['Allgemein', 'Buchstaben', 'Schuhe (EU)'],
+  'Unterwäsche & Nachtwäsche › Unterwäsche › BH': ['Allgemein', 'Buchstaben', 'BH'],
+  'Unterwäsche & Nachtwäsche › Unterwäsche › Dessous': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'BH'],
+  'Unterwäsche & Nachtwäsche › Unterwäsche › Korsett': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'BH'],
+  'Oberteile › Sportbekleidung › Sport-BH': ['Allgemein', 'Buchstaben', 'BH'],
+  'Oberteile › Top › Bustier': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'BH'],
+  'Bademode › Badebekleidung › Bikinioberteil': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'BH'],
+  'Bademode › Badebekleidung › Bikini': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'BH'],
+  'Bademode › Badebekleidung › Badeanzug': ['Allgemein', 'Buchstaben', 'Konfektionsgröße', 'BH'],
+  'Schmuck': ['Allgemein'],
+  'Schmuck › Ringe': ['Allgemein', 'Ringgröße'],
+  'Schuhe': ['Allgemein', 'Schuhe (EU)'],
+  'Bademode': ['Allgemein', 'Buchstaben', 'Konfektionsgröße'],
+};
 
 // Zustand – von bester zu schlechtester Qualität
 // Schnitte je Oberkategorie (nur dort erscheint das Feld „Schnitt“). Eigene Schnitte lassen sich im Editor ergänzen.
 const SCHNITTE = {
   Oberteile: ['Slim Fit', 'Regular Fit', 'Relaxed Fit', 'Oversize', 'Boxy', 'Muscle Fit', 'Tailliert', 'Cropped', 'Longline'],
-  Unterteile: ['Skinny', 'Slim Fit', 'Regular Fit', 'Straight', 'Tapered', 'Relaxed Fit', 'Loose / Baggy', 'Bootcut', 'Ausgestellt', 'Wide Leg', 'Carrot'],
+  Unterteile: ['Skinny', 'Slim Fit', 'Regular Fit', 'Straight', 'Tapered', 'Relaxed Fit', 'Loose / Baggy', 'Bootcut', 'Flared', 'Wide Leg', 'Carrot'],
 };
+
+// Kleine Diagramme der Schnitte (Silhouetten), getrennt nach Oberteilen und Hosen.
+// Hosen: je Bein Mitte (c) und halbe Breite (w) an Oberschenkel (T), Knie (K) und Saum (H); crotch = Schritthöhe
+const SCHNITT_HOSE = {
+  'Skinny': { wT: 3.5, cK: 3, wK: 2.1, cH: 2.8, wH: 1.5 },
+  'Slim Fit': { wT: 3.6, cK: 3.1, wK: 2.6, cH: 3, wH: 2.2 },
+  'Regular Fit': { wT: 3.8, cK: 3.3, wK: 3, cH: 3.3, wH: 2.8 },
+  'Straight': { wT: 3.6, cK: 3.4, wK: 3, cH: 3.5, wH: 3 },
+  'Tapered': { wT: 4.3, cK: 3.3, wK: 2.8, cH: 3, wH: 1.8 },
+  'Relaxed Fit': { wT: 4.3, cK: 3.7, wK: 3.5, cH: 3.8, wH: 3.4 },
+  'Loose / Baggy': { wT: 5, cT: 3.8, cK: 4.4, wK: 4.3, cH: 4.6, wH: 4.4, crotch: 14 },
+  'Bootcut': { wT: 3.6, cK: 3.2, wK: 2.5, cH: 3.6, wH: 3.4 },
+  'Flared': { wT: 3.6, cK: 3.1, wK: 2.3, cH: 4.6, wH: 4.5 },
+  'Wide Leg': { wT: 4.7, cK: 4.4, wK: 4.3, cH: 5, wH: 4.9 },
+  'Carrot': { wT: 5.2, cT: 3.8, cK: 3.4, wK: 3, cH: 3, wH: 1.7 },
+};
+// Oberteile: halbe Breite an Schulter (s), Brust (c), Taille (w), Saum (h); Länge (L); drop = tiefer gesetzte Schulter;
+// sl = Ärmellänge
+const SCHNITT_OBEN = {
+  'Slim Fit': { s: 5.6, c: 5.8, w: 5.2, h: 5.4, L: 26 },
+  'Regular Fit': { s: 6, c: 6.5, w: 6.5, h: 6.5, L: 26 },
+  'Relaxed Fit': { s: 6.8, c: 7.3, w: 7.3, h: 7.3, L: 26.5, drop: 0.8 },
+  'Oversize': { s: 8.6, c: 8.6, w: 8.6, h: 8.6, L: 28.5, drop: 2.2, sl: 6 },
+  'Boxy': { s: 7.6, c: 8.2, w: 8.2, h: 8.2, L: 21.5, drop: 1 },
+  'Muscle Fit': { s: 7, c: 6.6, w: 4.9, h: 5.1, L: 25.5, sl: 3.6 },
+  'Tailliert': { s: 6, c: 6.4, w: 4.7, h: 6.4, L: 26 },
+  'Cropped': { s: 6, c: 6.5, w: 6.5, h: 6.5, L: 17 },
+  'Longline': { s: 6, c: 6.3, w: 6.3, h: 6.7, L: 31 },
+};
+const f1 = (n) => Math.round(n * 10) / 10;
+function schnittSvg(name, kat) {
+  const hose = SCHNITT_HOSE[name], oben = SCHNITT_OBEN[name];
+  const useHose = hose && (kat === 'Unterteile' || !oben);
+  const svg = (vb, d) => `<svg class="schnitticon" viewBox="${vb}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${d}</svg>`;
+  if (useHose) {
+    const { cT = 3.5, wT, cK, wK, cH, wH, crotch = 12 } = hose;
+    const P = (x, y) => `${f1(x)} ${y}`;
+    const d = `M5 4 L${P(12 - cT - wT, 11)} L${P(12 - cK - wK, 20)} L${P(12 - cH - wH, 30)} L${P(12 - cH + wH, 30)} L${P(12 - cK + wK, 20)} L12 ${crotch}`
+      + ` L${P(12 + cK - wK, 20)} L${P(12 + cH - wH, 30)} L${P(12 + cH + wH, 30)} L${P(12 + cK + wK, 20)} L${P(12 + cT + wT, 11)} L19 4 Z`;
+    return svg('0 0 24 32', `<path d="M5 4 V2 H19 V4"/><path d="${d}"/>`);
+  }
+  if (!oben) return '';
+  const { s: sh, c, w, h, L, drop = 0, sl = 4.5 } = oben;
+  const X = (dx) => f1(16 + dx);
+  // Ärmel: schräg nach außen (ca. 35°), Bündchen quer dazu
+  const ox = sh + sl * 1.07, oy = 4 + drop + sl * 0.74; // Ärmelende außen
+  const ix = ox - 1.9, iy = oy + 2.8;                    // Ärmelende innen
+  const half = (sg) => [`L${X(sg * sh)} ${f1(4 + drop)}`, `L${X(sg * ox)} ${f1(oy)}`, `L${X(sg * ix)} ${f1(iy)}`,
+    `L${X(sg * c)} ${f1(10 + drop)}`, `L${X(sg * w)} 18`, `L${X(sg * h)} ${L}`];
+  const r = half(1), l = half(-1).reverse();
+  const d = `M13 3 Q16 6 19 3 ${r.join(' ')} ${l.join(' ')} Z`;
+  return svg('0 0 32 32', `<path d="${d}"/>`);
+}
 
 // Erklärungen zu den Schnitten (das „?“ in der Auswahl und in der Detailansicht)
 const SCHNITT_INFO = {
@@ -69,7 +157,7 @@ const SCHNITT_INFO = {
   'Tapered': 'Oben bequem, zum Knöchel hin schmaler zulaufend.',
   'Loose / Baggy': 'Sehr weit und locker, oft mit tiefem Schritt; das Bein fällt über den Schuh.',
   'Bootcut': 'Bis zum Knie schmal, darunter leicht ausgestellt – Platz für Stiefel.',
-  'Ausgestellt': 'Ab dem Knie deutlich weiter werdend (Schlag, „Flared“).',
+  'Flared': 'Ab dem Knie deutlich weiter werdend (Schlaghose).',
   'Wide Leg': 'Durchgehend weites Bein von der Hüfte bis zum Saum.',
   'Carrot': 'An Hüfte und Oberschenkel weit, zum Knöchel stark verjüngt – wie eine Karotte.',
 };

@@ -671,7 +671,7 @@ html:has(dialog[open]), html:has(dialog[open]) body { overflow: hidden; overscro
 .frow .fcheck { width: 18px; height: 18px; border: 2px solid var(--line); border-radius: 5px; flex: 0 0 auto; display: grid; place-items: center; }
 .frow.on .fcheck { background: var(--brand); border-color: var(--brand); }
 .frow.on .fcheck::after { content: ""; width: 5px; height: 9px; border: solid var(--brand-ink); border-width: 0 2px 2px 0; transform: translateY(-1px) rotate(45deg); }
-.frow.fclear { color: var(--brand); font-size: 13px; border-top: 1px solid var(--line); }
+.frow.fclear { color: var(--brand); font-size: 13px; border-bottom: 1px solid var(--line); }
 @media (prefers-color-scheme: dark) { .frow.fclear { color: #8fd0c6; } }
 .fdropbtn { font-size: 12px; padding: 7px 26px 7px 8px; border-radius: 9px; }
 .fdropbtn .sw { width: 13px; height: 13px; }
@@ -817,4 +817,28 @@ textarea.autosize { resize: none; overflow: hidden; }
 /* Auswahlfenster (Teile/Outfits): Sortierung und Filter wie in der Übersicht */
 .picktools select { flex: 0 1 auto; min-width: 0; max-width: 34%; text-overflow: ellipsis; border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 0 6px; font-size: 14px; }
 .picktools input { flex: 1 1 90px; }
-#pickFilters, #opickFilters { max-height: 55vh; overflow-y: auto; overscroll-behavior: contain; padding-top: 10px; padding-bottom: 10px; background: var(--bg); border-bottom: 1px solid var(--line); }
+#pickFilters, #opickFilters { padding-top: 10px; padding-bottom: 10px; background: var(--bg); }
+/* Filter im Auswahlfenster füllt das ganze Fenster (wie in der Übersicht) */
+.sheet.filtering .sheetbody { display: none; }
+.sheet.filtering .filters, #pickDlg.filtering .filters { flex: 1; min-height: 0; max-height: none; overflow-y: auto; border-bottom: 0; overscroll-behavior: contain; align-content: start; }
+.sheet.filtering .filters [data-reset-filters] { display: none; }
+.pickbar { display: flex; gap: 10px; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); }
+.pickbar[hidden] { display: none; }
+.pickbar > button { padding: 14px; border-radius: 14px; font-size: 16px; }
+.pickbar [data-pickbar-done] { flex: 1; }
+.pickbar [data-pickbar-reset] { flex: 0 0 auto; padding: 14px 18px; }
+
+/* Schnitt-Diagramme */
+.schnitticon { width: 26px; height: 32px; flex: 0 0 26px; vertical-align: middle; }
+.orowopt .ochip .schnitticon { width: 30px; height: 36px; flex-basis: 30px; margin-right: 6px; }
+.orowopt .ochip:has(.schnitticon) { display: flex; align-items: center; }
+.tag .schnitticon { width: 20px; height: 24px; flex-basis: 20px; margin-right: 3px; }
+.infoval .schnitticon { width: 24px; height: 30px; margin-right: 6px; }
+
+/* Materialgruppen (Obermaterial, Futter …) */
+.matgroup + .matgroup { margin-top: 10px; }
+.matgroup.multi { border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
+.matpickrow .pickbtn { flex: 1; min-width: 0; }
+.matadd { flex: 0 0 auto; width: 42px; height: 42px; padding: 0; font-size: 22px; line-height: 1; display: grid; place-items: center; }
+.matnamerow { margin-bottom: 6px; }
+.matnamerow .matname { flex: 1; min-width: 0; padding: 7px 10px; font-size: 15px; font-weight: 600; }

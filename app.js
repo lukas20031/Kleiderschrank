@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.33.0';
+const APP_VERSION = '2.37.0';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -72,13 +72,23 @@ const fieldText = (it, key) => {
   if (t === 'count') return qty(it) > 1 ? String(qty(it)) : ''; // nur zeigen, wenn mehr als 1
   if (t === 'price') return formatPrice(it[key]);
   if (t === 'date') return formatDate(it[key]);
-  if (key === 'materialien') return materialList(it).map(([m, p]) => p ? `${m} ${p} %` : m).join(', ');
+  if (key === 'materialien') {
+    const txt = (list) => list.map(([m, p]) => (p ? `${m} ${p} %` : m)).join(', ');
+    // mehrere Materialgruppen (z. B. Obermaterial/Futter): je Gruppe eine Zeile
+    if (matGroupsOf(it).length > 1) return matGroupsOf(it).map((g) => `${g.name || 'Material'}: ${txt(materialList({ materialien: g.materialien, materialAnteile: g.anteile }))}`).join('\n');
+    return txt(materialList(it));
+  }
   if (key === 'farben') {
     const fs = farbList(it);
     return fs.map((c) => (fs.length > 1 && farbRolle(it, c) ? `${c} (${farbRolle(it, c)})` : c)).join(', ');
   }
   return fieldValues(it, key).join(', ');
 };
+/* Materialgruppen: bei mehr als einer Gruppe (z. B. Obermaterial + Futter/Inlet) steht in materialGruppen
+ * [{ name, materialien, anteile }]. „materialien“ enthält dann alle Materialien zusammen (für Filter und Suche),
+ * „materialAnteile“ die Anteile der ersten Gruppe. */
+const matGroupsOf = (it) => (Array.isArray(it.materialGruppen) && it.materialGruppen.length > 1 ? it.materialGruppen : []);
+const MATGROUP_NAMES = ['Obermaterial', 'Futter', 'Inlet', 'Füllung', 'Innenfutter', 'Kapuze', 'Ärmel', 'Besatz', 'Bündchen', 'Einsatz', 'Sohle', 'Innensohle'];
 /** Materialien mit Anteil in Prozent (falls angegeben), größter Anteil zuerst */
 function materialList(it) {
   const ant = it.materialAnteile || {};
@@ -99,7 +109,7 @@ const farbRang = (it, c) => { const r = farbRolle(it, c); return r ? FARB_ROLLEN
 /** Farben eines Teils, Hauptfarbe zuerst */
 const farbList = (it) => fieldValues(it, 'farben').map((c, i) => [c, farbRang(it, c), i]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(([c]) => c);
 const swatch = (name) => `<span class="sw" style="background:${FARB_MAP.get(name) || '#ccc'}"></span>`;
-const DATA_VERSION = 9;
+const DATA_VERSION = 10;
 /* Umbau der Shirts (Version 3/4): „T-Shirts“ heißt jetzt „Kurzarmshirts“, Langarm-Shirts haben eine eigene
  * Unterkategorie, Poloshirt ist nach Ärmellänge getrennt, doppelte Arten sind zusammengelegt. */
 const SHIRT_MOVES = {
@@ -122,9 +132,19 @@ const SCHMUCK_MOVES = {
   // 2.19: Intimpiercings zusammengefasst
   ...Object.fromEntries(['Klitorisvorhaut (VCH)', 'Schamlippen (Labia)', 'Prinz Albert', 'Frenum (Intim)', 'Hafada'].map((t) => [t, ['Piercings', 'Intimpiercing']])),
 };
+// 2.35: Unterteile neu geordnet – Hosen + Jeans → Lange Hosen; Arten, die nur einen Schnitt beschreiben, werden zur
+// allgemeinen Art, der Schnitt landet im Feld „Schnitt“
+const UNTER_SUB = { 'Hosen': 'Lange Hosen', 'Jeans': 'Lange Hosen', 'Kurze Hose': 'Kurze Hosen', 'Sportbekleidung': 'Sporthosen' };
+const UNTER_TYP = {
+  'Schlaghose': ['Hose', 'Flared'], 'Hosen mit weitem Bein': ['Hose', 'Wide Leg'], 'Capri-/Röhrenhose': ['Caprihose', ''],
+  'Baggy-Jeans': ['Jeans', 'Loose / Baggy'], 'Skinny-Jeans': ['Jeans', 'Skinny'], 'Bootcut-Jeans': ['Jeans', 'Bootcut'],
+  'Gerade geschnittene Jeans': ['Jeans', 'Straight'], 'Jeans mit Schlag': ['Jeans', 'Flared'], 'Jeans mit weitem Bein': ['Jeans', 'Wide Leg'],
+  'Schmal geschnittene Jeans': ['Jeans', 'Slim Fit'], 'Schmal geschnittene Shorts': ['Shorts', 'Slim Fit'], 'Schmal geschnittener Rock': ['Rock', 'Slim Fit'],
+};
 /** Alte Einteilung in die aktuelle übersetzen: [kategorie, unterkategorie, typ] oder null (unverändert).
  *  forFilter: ohne Art bleibt die Unterkategorie offen (ganzer Schmuck statt „Sonstiger Schmuck“). */
 function moveCat(kat, sub, typ, forFilter = false) {
+  if (kat === 'Unterteile' && (UNTER_SUB[sub] || UNTER_TYP[typ])) return [kat, UNTER_SUB[sub] || sub, UNTER_TYP[typ]?.[0] ?? typ];
   if (kat === 'Accessoires' && sub === 'Schmuck') {
     if (!typ) return ['Schmuck', forFilter ? '' : 'Sonstiger Schmuck', ''];
     return ['Schmuck', ...(SCHMUCK_MOVES[typ] || ['Sonstiger Schmuck', typ])];
@@ -214,6 +234,7 @@ function normalizeSize(raw) {
 }
 // Umbenannte Materialien: 2.22 „Elasthan“, 2.23 „Polyacryl (Acryl)“
 const PFLEGE_RENAME = { 'Auf links drehen': 'Von links waschen' }; // 2.25.4
+const SCHNITT_RENAME = { Ausgestellt: 'Flared' }; // 2.36
 const MAT_RENAME = { Elastan: 'Elasthan', Acryl: 'Polyacryl (Acryl)', Polyacryl: 'Polyacryl (Acryl)' };
 /** Wert in einem Listenfeld umbenennen (to = '' löscht ihn); bei Materialien auch den Prozentanteil mitnehmen.
  *  Gibt die geänderten Felder zurück oder null, wenn der Wert nicht vorkommt. */
@@ -227,6 +248,12 @@ function renamedMulti(rec, key, from, to) {
     delete ant[from];
     out.materialAnteile = ant;
   }
+  if (key === 'materialien' && matGroupsOf(rec).length) {
+    out.materialGruppen = rec.materialGruppen.map((g) => {
+      const r = renamedMulti({ materialien: g.materialien, materialAnteile: g.anteile }, 'materialien', from, to);
+      return r ? { ...g, materialien: r.materialien, ...(r.materialAnteile ? { anteile: r.materialAnteile } : {}) } : g;
+    });
+  }
   return out;
 }
 async function migrateItems(list) {
@@ -237,7 +264,8 @@ async function migrateItems(list) {
     if ((it.v || 0) > DATA_VERSION) { newer = true; continue; }
     const needCat = it.kategorie && !CAT.l1.has(it.kategorie);
     const needMat = (it.materialien || []).some((m) => MAT_RENAME[m]) // umbenannte Materialien
-      || (it.pflege || []).some((p) => PFLEGE_RENAME[p]); // umbenannte Waschhinweise
+      || (it.pflege || []).some((p) => PFLEGE_RENAME[p]) // umbenannte Waschhinweise
+      || fieldValues(it, 'schnitt').some((x) => SCHNITT_RENAME[x]); // umbenannte Schnitte
     if (it.v === DATA_VERSION && !needCat && !needMat) continue;
     const upd = { ...it, _dirty: true, v: DATA_VERSION };
     const alt = { ...(it.alt || {}) };
@@ -268,8 +296,13 @@ async function migrateItems(list) {
       const m = matchOption('zustand', it.zustand);
       if (m) upd.zustand = m; else { alt.zustand = it.zustand; upd.zustand = ''; }
     }
+    const oldTyp = upd.typ;
     const mv = moveCat(upd.kategorie, upd.unterkategorie, upd.typ);
     if (mv) [upd.kategorie, upd.unterkategorie, upd.typ] = mv;
+    // entfallene Schnitt-Arten: Schnitt übernehmen
+    const sn = upd.kategorie === 'Unterteile' && UNTER_TYP[oldTyp]?.[1];
+    if (sn) upd.schnitt = [...new Set([...fieldValues(upd, 'schnitt'), sn])];
+    if (fieldValues(upd, 'schnitt').some((x) => SCHNITT_RENAME[x])) upd.schnitt = [...new Set(fieldValues(upd, 'schnitt').map((x) => SCHNITT_RENAME[x] || x))];
     if (needMat) {
       for (const [from, to] of Object.entries(MAT_RENAME)) Object.assign(upd, renamedMulti(upd, 'materialien', from, to));
       for (const [from, to] of Object.entries(PFLEGE_RENAME)) Object.assign(upd, renamedMulti(upd, 'pflege', from, to));
@@ -2038,8 +2071,8 @@ function dropHtml(key, label, list, sel, { swatches = false, names = {}, empty =
     }).join('');
     const search = list.length >= DROP_SEARCH_MIN
       ? `<input type="search" class="fdropsearch" data-fsearch="${key}" placeholder="${esc(label)} durchsuchen …" value="${esc(dropQuery)}" autocomplete="off" enterkeyhint="done">` : '';
-    body = `<div class="fdroplist">${search}${rows}<p class="muted fnohit"${list.length && any ? ' hidden' : ''}>${list.length ? 'Nichts gefunden' : 'Keine Einträge'}</p>
-          ${sel.length && !noClear ? `<button type="button" class="frow fclear" data-fchip-clear="${key}">Auswahl aufheben</button>` : ''}</div>`;
+    const clear = sel.length && !noClear ? `<button type="button" class="frow fclear" data-fchip-clear="${key}">Auswahl aufheben</button>` : '';
+    body = `<div class="fdroplist">${search}${clear}${rows}<p class="muted fnohit"${list.length && any ? ' hidden' : ''}>${list.length ? 'Nichts gefunden' : 'Keine Einträge'}</p></div>`;
   }
   return `<div class="fdrop${open ? ' open' : ''}"><span class="flabel">${esc(label)}</span>
         <button type="button" class="fdropbtn" data-fdrop="${key}" aria-expanded="${open}">${summary}</button>${body}</div>`;
@@ -2081,6 +2114,21 @@ function matchFilters(it, fState, skip = null) {
   return true;
 }
 /** Klicks in der Farbliste: auf-/zuklappen, Farbe an/aus, Auswahl aufheben. true = Filter neu zeichnen */
+/** Neu zeichnen, ohne dass die aufgeklappte Liste und der Filterbereich nach oben springen */
+function keepFilterScroll(box, rerender) {
+  const openKey = () => box.querySelector('.fdrop.open [data-fdrop]')?.dataset.fdrop;
+  const key = openKey();
+  const list = box.querySelector('.fdrop.open .fdroplist')?.scrollTop ?? 0;
+  const clearH = () => box.querySelector('.fdrop.open .fclear')?.offsetHeight || 0; // „Auswahl aufheben“ oben
+  const ch = clearH();
+  const outer = box.scrollTop, win = window.scrollY;
+  rerender();
+  const l = box.querySelector('.fdrop.open .fdroplist');
+  // nur dieselbe Liste an ihrer Stelle lassen; erscheint/verschwindet „Auswahl aufheben“, um dessen Höhe ausgleichen
+  if (l && key && openKey() === key) l.scrollTop = list + (list > 0 ? clearH() - ch : 0);
+  box.scrollTop = outer;
+  if (window.scrollY !== win) window.scrollTo(0, win);
+}
 function onFilterDrop(e, st) {
   const t = e.target;
   const d = t.closest('[data-fdrop]');
@@ -2167,6 +2215,22 @@ function renderSortOptions() {
   sel.innerHTML = SORTS[t].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
   sel.value = SORTS[t].some(([v]) => v === saved) ? saved : 'new';
 }
+/** Filter im Auswahlfenster als Vollbild (wie in der Übersicht): Liste ausblenden, unten Zurücksetzen / … anzeigen */
+function setPickFiltering(dlg, open) {
+  dlg.classList.toggle('filtering', open);
+  dlg.querySelector('.filters').hidden = !open;
+  dlg.querySelector('.pickbar').hidden = !open;
+  openDrop = null;
+  if (open) dlg.querySelector('.filters').scrollTop = 0;
+}
+function wirePickFiltering(dlg, toggle, reset, rerender) {
+  toggle.addEventListener('click', () => { setPickFiltering(dlg, !dlg.classList.contains('filtering')); rerender(); });
+  dlg.querySelector('[data-pickbar-done]').addEventListener('click', () => { setPickFiltering(dlg, false); rerender(); });
+  dlg.querySelector('[data-pickbar-reset]').addEventListener('click', () => { reset(); rerender(); });
+  // Zurück-Taste (Handy) bzw. Esc schließt erst den Filter, dann das Fenster
+  dlg.addEventListener('cancel', (e) => { if (dlg.classList.contains('filtering')) { e.preventDefault(); setPickFiltering(dlg, false); rerender(); } });
+  dlg.addEventListener('close', () => setPickFiltering(dlg, false));
+}
 /** Sortier-Auswahl der Auswahlfenster (gleiche Möglichkeiten wie in der Übersicht, eigene gemerkte Wahl) */
 function fillSortSelect(sel, kind, lsKey, def) {
   const saved = localStorage.getItem(lsKey);
@@ -2189,14 +2253,25 @@ function sortOutfits(list, sort) {
 }
 function filteredItems() { return filterItems($('#search').value, filters, $('#sort').value); }
 
-/* Welches Bild zeigen die Kacheln? Teile: Titelbild oder erstes Foto mit Tag; Outfits: Outfitfoto oder Collage */
-let itemView = localStorage.getItem('ks_itemview') || '';
+/* Welches Bild zeigen die Kacheln? Teile: Titelbild oder das Foto, das die meisten gewählten Tags hat; Outfits: Outfitfoto oder Collage */
+let itemView = (() => { // gewählte Foto-Tags (leer = Titelbild); früher ein einzelner Tag als Text
+  const raw = localStorage.getItem('ks_itemview') || '';
+  try { const v = JSON.parse(raw); if (Array.isArray(v)) return v.filter(Boolean); } catch { /* alter Einzelwert */ }
+  return raw ? [raw] : [];
+})();
 let outfitView = localStorage.getItem('ks_outfitview') || '';
-/** Foto passend zum gewählten Tag, sonst das Titelbild */
+/** Foto mit den meisten der gewählten Tags (bei Gleichstand das vordere); hat keines einen davon: das Titelbild */
 function viewPhoto(it) {
   const ps = it.photos || [];
-  if (itemView) { const hit = ps.find((pid) => ((it.photoTags || {})[pid] || []).includes(itemView)); if (hit) return hit; }
-  return ps[0];
+  let best = ps[0], bestN = 0;
+  if (itemView.length) {
+    for (const pid of ps) {
+      const tags = (it.photoTags || {})[pid] || [];
+      const n = itemView.filter((t) => tags.includes(t)).length;
+      if (n > bestN) { best = pid; bestN = n; }
+    }
+  }
+  return best;
 }
 function renderViewChips() {
   const box = $('#viewChips');
@@ -2209,12 +2284,13 @@ function renderViewChips() {
     const used = new Set((tab === 'wish' ? wishes : items).flatMap((it) => Object.values(it.photoTags || {}).flat()));
     const tags = allPhotoTags().filter((t) => used.has(t));
     if (tags.length) opts = [['', 'Titelbild'], ...tags.map((t) => [t, t])];
-    cur = itemView;
-    if (cur && !tags.includes(cur)) opts.push([cur, cur]);
+    for (const t of itemView) if (!tags.includes(t)) opts.push([t, t]);
   }
+  // Teile: Mehrfachauswahl (keine Auswahl = Titelbild); Outfits: Einfachauswahl
+  const active = (v) => (tab === 'outfits' ? v === cur : v === '' ? !itemView.length : itemView.includes(v));
   box.hidden = !opts.length;
   box.innerHTML = opts.length ? `<span class="vlabel">Bild:</span>${opts.map(([v, l]) =>
-    `<button type="button" class="chipbtn${v === cur ? ' active' : ''}" data-view="${esc(v)}">${esc(l)}</button>`).join('')}` : '';
+    `<button type="button" class="chipbtn${active(v) ? ' active' : ''}" data-view="${esc(v)}" aria-pressed="${active(v)}">${esc(l)}</button>`).join('')}` : '';
 }
 
 /** Karte eines Teils (Übersicht, Teile-Auswahl, Outfit-Detail) */
@@ -2550,7 +2626,7 @@ function openItemPicker(ids = oed.itemIds, onDone = (next) => { oed.itemIds = ne
   pick.base = [...ids];
   pick.onDone = onDone;
   $('#pickSearch').value = '';
-  $('#pickFilters').hidden = true;
+  setPickFiltering($('#pickDlg'), false);
   renderPicker();
   $('#pickDlg').showModal();
 }
@@ -2563,6 +2639,7 @@ function renderPicker() {
   $('#pickGrid').innerHTML = list.map((it) => itemCardHtml(it, { selected: pick.selected.has(it.id) })).join('')
     || '<p class="muted">Keine passenden Teile.</p>';
   $('#pickDone').textContent = `Fertig (${pick.selected.size})`;
+  $('#pickDlg [data-pickbar-done]').textContent = `${list.length} ${list.length === 1 ? 'Teil' : 'Teile'} anzeigen`;
 }
 
 /** Detailansicht: brechen Waschhinweise um, stehen sie in voller Breite unter dem Label */
@@ -2628,7 +2705,7 @@ async function openDetail(id) {
       ? `${fieldText(it, f.key)} pro Stück (zusammen ${formatPrice(Number(it.preis) * qty(it))})` : fieldText(it, f.key)), f.swatch ? farbList(it) : null,
       f.icon ? `<button type="button" class="careicons" data-careexpand aria-label="Waschhinweise anzeigen">${fieldValues(it, f.key).map(careIcon).join('')}</button><span class="carelist" hidden>${fieldValues(it, f.key).map((v) => `<span>${careIcon(v)}<span class="ct">${esc(v)}</span>${PFLEGE_INFO[v]
         ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(PFLEGE_INFO[v])}</span>` : ''}</span>`).join('')}</span>`
-        : f.info ? fieldValues(it, f.key).map((v) => `<span class="infoval">${esc(v)}${f.info[v]
+        : f.info ? fieldValues(it, f.key).map((v) => `<span class="infoval">${f.key === 'schnitt' ? schnittSvg(v, it.kategorie) : ''}${esc(v)}${f.info[v]
           ? ` <button type="button" class="kinfo" data-detailinfo aria-label="Was bedeutet ${esc(v)}?" aria-expanded="false">?</button><span class="kexpl" hidden>${esc(f.info[v])}</span>` : ''}</span>`).join('') : null]),
     ['Anlass', (it.anlass || []).join(', ')], ['Jahreszeit', (it.jahreszeit || []).join(', ')], ['Notiz', it.notiz],
   ].filter(([, v]) => v);
@@ -2694,7 +2771,8 @@ function buildFieldInputs() {
       return `<div class="${cls}">${esc(f.label)}<div class="chips" id="chips-${f.key}"></div>${alt}</div>`;
     }
     const auto = f.key === 'farben' ? '<span class="hint autohint" id="auto-farben" hidden>✨ Automatisch erkannt – tippe zum Ändern</span>' : '';
-    const shares = f.key === 'materialien' ? '<div class="anteile" id="anteile" hidden></div>' : f.key === 'farben' ? '<div class="anteile" id="farbRollen" hidden></div>' : '';
+    if (f.key === 'materialien') return `<div class="${cls}">${esc(f.label)}<div id="matGroups"></div><datalist id="dl-matgroup">${MATGROUP_NAMES.map((n) => `<option value="${n}">`).join('')}</datalist>${alt}</div>`;
+    const shares = f.key === 'farben' ? '<div class="anteile" id="farbRollen" hidden></div>' : '';
     return `<div class="${cls}">${esc(f.label)}<button type="button" class="katbtn pickbtn" data-pick="${f.key}"></button>${auto}${shares}${alt}</div>`;
   });
   $('#fieldGrid').innerHTML = html.filter((_, i) => !FIELDS[i].slot).join('');
@@ -2739,15 +2817,16 @@ function renderPickFields() {
         `<button type="button" class="chipbtn${ed.vals[f.key] === o ? ' active' : ''}" data-chip="${f.key}" data-val="${esc(o)}">${esc(o)}</button>`).join('');
       continue;
     }
+    if (f.key === 'materialien') continue; // eigene Darstellung (Gruppen)
     let vals = f.type === 'multi' ? ed.vals[f.key] : (ed.vals[f.key] ? [ed.vals[f.key]] : []);
     if (f.key === 'farben') vals = farbList({ farben: vals, farbRollen: ed.farbRollen });
     const btn = $(`#editor [data-pick="${f.key}"]`);
     btn.classList.toggle('empty', !vals.length);
     btn.innerHTML = `<span class="picked">${vals.length
-      ? vals.map((v) => `<span class="tag${f.icon ? ' icontag' : ''}">${f.swatch ? swatch(v) : ''}${f.icon ? careIcon(v) : ''}${esc(v)}</span>`).join('')
+      ? vals.map((v) => `<span class="tag${f.icon || f.key === 'schnitt' ? ' icontag' : ''}">${f.swatch ? swatch(v) : ''}${f.icon ? careIcon(v) : ''}${f.key === 'schnitt' ? schnittSvg(v, ed.kat.kategorie) : ''}${esc(v)}</span>`).join('')
       : `${esc(f.label)} wählen`}</span><span aria-hidden="true">›</span>`;
   }
-  renderAnteile();
+  renderMatGroups();
   renderFarbRollen();
   const av = ed.vals.anlass;
   $('#anlassPick').classList.toggle('empty', !av.length);
@@ -2762,19 +2841,29 @@ function renderFarbRollen() {
   box.innerHTML = fs.map((c) => `<div class="anteil rolle"><span>${swatch(c)} ${esc(c)}</span><span class="rollen">${FARB_ROLLEN.map((r) =>
     `<button type="button" class="chipbtn${ed.farbRollen[c] === r ? ' active' : ''}" data-rolle="${esc(c)}" data-val="${r}">${FARB_ROLLE_KURZ[r]}</button>`).join('')}</span></div>`).join('');
 }
-/** Editor: Anteile in Prozent je gewähltem Material */
-function renderAnteile() {
-  const box = $('#anteile');
-  const mats = ed.vals.materialien || [];
-  box.hidden = mats.length < 2; // Anteile erst ab zwei Materialien
-  box.innerHTML = mats.map((m) => `<label class="anteil"><span>${esc(m)}</span><span class="unit"><input type="number" inputmode="numeric" min="1" max="100" step="1" data-anteil="${esc(m)}" value="${esc(ed.anteile[m] ?? '')}" placeholder="–"><span>%</span></span></label>`).join('')
-    + '<p class="hint" id="anteilSum"></p>';
-  renderAnteilSum();
+/** Editor: aktive Materialgruppe – ed.vals.materialien ist immer die Liste der gerade bearbeiteten Gruppe */
+function syncMat() { if (ed?.matGroups) ed.matGroups[ed.matActive].vals = ed.vals.materialien; }
+function setMatActive(i) { syncMat(); ed.matActive = i; ed.vals.materialien = ed.matGroups[i].vals; }
+/** Editor: Materialgruppen mit Auswahlknopf, Namen (ab zwei Gruppen) und Anteilen in Prozent (ab zwei Materialien) */
+function renderMatGroups() {
+  syncMat();
+  const gs = ed.matGroups, multi = gs.length > 1;
+  $('#matGroups').innerHTML = gs.map((g, i) => {
+    const tags = g.vals.length ? g.vals.map((v) => `<span class="tag">${esc(v)}</span>`).join('') : 'Material wählen';
+    const shares = g.vals.length < 2 ? '' : `<div class="anteile">${g.vals.map((m) => `<label class="anteil"><span>${esc(m)}</span><span class="unit"><input type="number" inputmode="numeric" min="1" max="100" step="1" data-anteil="${esc(m)}" data-mg="${i}" value="${esc(g.anteile[m] ?? '')}" placeholder="–"><span>%</span></span></label>`).join('')}<p class="hint" data-anteilsum="${i}"></p></div>`;
+    return `<div class="matgroup${multi ? ' multi' : ''}">
+      ${multi ? `<div class="row matnamerow"><input class="matname" data-matname="${i}" list="dl-matgroup" value="${esc(g.name)}" placeholder="Name, z. B. ${i ? 'Futter' : 'Obermaterial'}" autocomplete="off"><button type="button" class="x" data-matdel="${i}" aria-label="Gruppe entfernen">✕</button></div>` : ''}
+      <div class="row matpickrow"><button type="button" class="katbtn pickbtn${g.vals.length ? '' : ' empty'}" data-pick="materialien" data-mg="${i}"><span class="picked">${tags}</span><span aria-hidden="true">›</span></button>${
+        i === 0 ? '<button type="button" class="chipbtn matadd" data-matadd aria-label="Weitere Materialgruppe (z. B. Futter, Inlet)" title="Weitere Materialgruppe (z. B. Futter, Inlet)">+</button>' : ''}</div>
+      ${shares}</div>`;
+  }).join('');
+  gs.forEach((_, i) => renderAnteilSum(i));
 }
-function renderAnteilSum() {
-  const vals = (ed.vals.materialien || []).map((m) => Number(ed.anteile[m]) || 0);
-  const sum = vals.reduce((a, b) => a + b, 0);
-  const el = $('#anteilSum');
+function renderAnteilSum(i) {
+  const g = ed.matGroups[i];
+  const el = $(`#matGroups [data-anteilsum="${i}"]`);
+  if (!el) return;
+  const sum = g.vals.map((m) => Number(g.anteile[m]) || 0).reduce((a, b) => a + b, 0);
   el.textContent = !sum ? '' : sum === 100 ? 'Summe 100 %' : `Summe ${sum} % – ergibt nicht 100 %`;
   el.classList.toggle('warn', !!sum && sum !== 100);
 }
@@ -2793,6 +2882,13 @@ function schnittOptions(kat) {
   return [...base, ...[...new Set(extra)].sort((a, b) => a.localeCompare(b, 'de'))];
 }
 const hasSchnitt = (kat) => !!SCHNITTE[kat];
+/** Größen-Gruppen passend zur Kategorie (GROESSEN_JE_KATEGORIE); eine schon gewählte Größe bleibt immer sichtbar */
+function groessenGroups(kat = {}, selected = '') {
+  const J = GROESSEN_JE_KATEGORIE;
+  const arten = J[`${kat.kategorie} › ${kat.unterkategorie} › ${kat.typ}`] || J[`${kat.kategorie} › ${kat.unterkategorie}`] || J[kat.kategorie];
+  if (!arten) return GROESSEN;
+  return GROESSEN.filter(([g, opts]) => arten.includes(g.split(' – ')[0]) || opts.includes(selected));
+}
 function optionsOf(key) {
   const f = FIELD[key];
   if (key === 'schnitt') return schnittOptions(ed?.kat?.kategorie);
@@ -2808,7 +2904,8 @@ function openOptions(key) {
   $('#optDone').textContent = FIELD[key].type === 'multi' ? 'Fertig' : 'Schließen';
   const f = FIELD[key];
   const sel = fieldValues(ed.vals, key);
-  optOpen = f.groups && !f.flatGroups ? f.groups.findIndex(([, opts]) => opts.some((o) => sel.includes(o))) : -1;
+  const gl = key === 'groesse' ? groessenGroups(ed.kat, ed.vals.groesse) : f.groups;
+  optOpen = gl && !f.flatGroups ? gl.findIndex(([, opts]) => opts.some((o) => sel.includes(o))) : -1;
   optOpenSet = new Set(['Häufig verwendet']); // anfangs nur die häufig verwendeten aufgeklappt
   renderOptions();
   $('#optDlg').showModal();
@@ -2820,11 +2917,12 @@ function openOptions(key) {
  *  Bevorzugt (immer dabei) sind die, die bei Teilen der gleichen Unterkategorie (bei zu wenigen Daten: der gleichen
  *  Kategorie) häufig sind; die übrigen Plätze füllen die häufigsten aller Teile.
  *  „Häufig“ = bei mind. 2 Teilen und mind. 20 % der betrachteten Teile mit Waschhinweisen. */
-function frequentGroups(key, max = 20) {
-  const order = (a, b) => (FIELD[key].order.get(a) ?? 1e9) - (FIELD[key].order.get(b) ?? 1e9);
+function frequentGroups(key, max = 20, relative = true) {
+  const order = (a, b) => (FIELD[key].order.get(a) ?? 1e9) - (FIELD[key].order.get(b) ?? 1e9) || a.localeCompare(b, 'de');
   const recs = [...items, ...wishes].filter((it) => it.id !== ed?.id && fieldValues(it, key).length);
   const frequent = (pool) => {
-    const min = Math.max(2, Math.ceil(pool.length * 0.2));
+    // relative: nur was bei mind. 2 Teilen und 20 % der Teile vorkommt; sonst einfach die häufigsten
+    const min = relative ? Math.max(2, Math.ceil(pool.length * 0.2)) : 1;
     return [...valuesFor(key, pool).entries()].filter(([, n]) => n >= min).sort((a, b) => b[1] - a[1] || order(a[0], b[0])).map(([v]) => v);
   };
   let catTop = [];
@@ -2845,13 +2943,16 @@ function renderOptions() {
   const q = $('#optSearch').value.trim().toLowerCase();
   const sel = new Set(fieldValues(ed.vals, optKey));
   $('#optTitle').textContent = f.type === 'multi' && sel.size ? `${f.label} (${sel.size})` : f.label;
-  let groups = f.groups || [[null, optionsOf(optKey)]];
+  let groups = optKey === 'groesse' ? groessenGroups(ed.kat, ed.vals.groesse) : f.groups || [[null, optionsOf(optKey)]];
   // Waschhinweise: oben noch einmal die bei anderen Teilen häufig verwendeten (nicht beim Suchen, sonst doppelt)
   if (optKey === 'pflege' && !q) groups = [...frequentGroups('pflege'), ...groups];
+  // Material, Herkunftsland: oben die 10 häufigsten (eigene Kategorie bevorzugt), darunter alle
+  const staticGroups = ['materialien', 'herkunft'].includes(optKey);
+  if (staticGroups && !q) { const fg = frequentGroups(optKey, 10, false); if (fg.length) groups = [...fg, ['Alle', groups[0][1]]]; }
   const info = f.icon ? PFLEGE_INFO : f.info;
   const chips = (hits) => info
     // Waschhinweise, Schnitte: eine Zeile je Eintrag, mit „?“ für die ausführliche Erklärung
-    ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.icon ? careIcon(o) : ''}${esc(o)}</button>${
+    ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.icon ? careIcon(o) : ''}${optKey === 'schnitt' ? schnittSvg(o, ed.kat.kategorie) : ''}${esc(o)}</button>${
       info[o] ? `<button type="button" class="kinfo${optInfo === o ? ' on' : ''}" data-optinfo="${esc(o)}" aria-label="Was bedeutet ${esc(o)}?" aria-expanded="${optInfo === o}">?</button>` : ''}${
       optInfo === o ? `<p class="kexpl">${esc(info[o])}</p>` : ''}</div>`).join('')}</div>`
     : `<div class="ochips${f.swatch ? ' swatches' : ''}">${hits.map((o) =>
@@ -2860,6 +2961,7 @@ function renderOptions() {
     const hits = opts.filter((o) => !q || o.toLowerCase().includes(q) || (g && g.toLowerCase().includes(q)));
     if (!hits.length) return '';
     if (!g) return chips(hits);
+    if (staticGroups) return `<h4 class="ogroup">${esc(g)}</h4>${chips(hits)}`;
     // Waschhinweise: jede Gruppe einzeln auf-/zuklappbar (beim Suchen alle offen)
     const open = !!q || (f.flatGroups ? optOpenSet.has(g) : optOpen === gi);
     const picked = opts.filter((o) => sel.has(o));
@@ -3001,12 +3103,16 @@ function openEditor(id = null, copyId = null) {
     kat: { kategorie: it?.kategorie || '', unterkategorie: it?.unterkategorie || '', typ: it?.typ || '' },
     vals: { ...Object.fromEntries(FIELDS.filter((f) => !isInputField(f)).map((f) => [f.key, f.type === 'multi' ? [...fieldValues(it || {}, f.key)] : (it?.[f.key] || '')])), anlass: [...(it?.anlass || [])] },
     alt: { ...(it?.alt || {}) },
-    anteile: { ...(it?.materialAnteile || {}) },
+    matGroups: matGroupsOf(it || {}).length
+      ? it.materialGruppen.map((g) => ({ name: g.name || '', vals: [...(g.materialien || [])], anteile: { ...(g.anteile || {}) } }))
+      : [{ name: '', vals: [...fieldValues(it || {}, 'materialien')], anteile: { ...(it?.materialAnteile || {}) } }],
+    matActive: 0,
     farbRollen: { ...(it?.farbRollen || {}) },
     passt: orig ? matchesOf(orig.id) : [...(it?.passtZu || [])],
     passtBefore: orig ? matchesOf(orig.id) : [],
     katAlt: it?.kategorieAlt || '',
   };
+  ed.vals.materialien = ed.matGroups[0].vals;
   renderKatButton();
   $('#editTitle').textContent = orig ? 'Bearbeiten' : it ? 'Kopie' : ed.wunsch ? 'Neuer Wunsch' : 'Neues Teil';
   $('#statusField').hidden = ed.wunsch;
@@ -3063,7 +3169,17 @@ async function saveEditor() {
   }
   if (Object.keys(ed.alt).length) it.alt = ed.alt; else delete it.alt;
   await saveMatches(it, ed.passtBefore);
-  const ant = (it.materialien || []).length < 2 ? {} : Object.fromEntries((it.materialien || []).map((m) => [m, Math.round(Number(ed.anteile[m]))]).filter(([, p]) => p > 0 && p <= 100));
+  syncMat();
+  const cleanAnt = (g) => (g.vals.length < 2 ? {} : Object.fromEntries(g.vals.map((m) => [m, Math.round(Number(g.anteile[m]))]).filter(([, p]) => p > 0 && p <= 100)));
+  const groups = ed.matGroups.filter((g, i) => i === 0 || g.vals.length);
+  const ant = cleanAnt(groups[0]);
+  if (groups.length > 1) {
+    it.materialGruppen = groups.map((g) => { const a = cleanAnt(g); return { name: g.name.trim(), materialien: [...g.vals], ...(Object.keys(a).length ? { anteile: a } : {}) }; });
+    it.materialien = [...new Set(groups.flatMap((g) => g.vals))];
+  } else {
+    delete it.materialGruppen;
+    it.materialien = [...groups[0].vals];
+  }
   if (Object.keys(ant).length) it.materialAnteile = ant; else delete it.materialAnteile;
   const fr = (it.farben || []).length < 2 ? {} : Object.fromEntries(it.farben.filter((c) => FARB_ROLLEN.includes(ed.farbRollen[c])).map((c) => [c, ed.farbRollen[c]]));
   if (Object.keys(fr).length) it.farbRollen = fr; else delete it.farbRollen;
@@ -3419,7 +3535,7 @@ function openOutfitPicker(title, cb) {
   $('#opickSearch').value = '';
   for (const k of Object.keys(opickFilters)) delete opickFilters[k];
   openDrop = null;
-  $('#opickFilters').hidden = true;
+  setPickFiltering($('#opickDlg'), false);
   fillSortSelect($('#opickSort'), 'outfits', 'ks_posort', 'new');
   renderOutfitPicker();
   $('#opickDlg').showModal();
@@ -3431,6 +3547,7 @@ function renderOutfitPicker() {
   $('#opickFilterCount').textContent = n ? `(${n})` : '';
   $('#opickFilterToggle').classList.toggle('active', n > 0);
   const list = sortOutfits(outfits.filter((o) => matchOutfit(o, opickFilters) && outfitMatchesQuery(o, q)), $('#opickSort').value);
+  $('#opickDlg [data-pickbar-done]').textContent = `${list.length} ${list.length === 1 ? 'Outfit' : 'Outfits'} anzeigen`;
   $('#opickGrid').innerHTML = list.map(outfitCardHtml).join('') || '<p class="muted">Keine Outfits gefunden.</p>';
 }
 
@@ -3641,7 +3758,7 @@ function wirePlanner() {
   });
   $('#opickSearch').addEventListener('input', renderOutfitPicker);
   $('#opickSort').addEventListener('change', () => { localStorage.setItem('ks_posort', $('#opickSort').value); renderOutfitPicker(); });
-  $('#opickFilterToggle').addEventListener('click', () => { $('#opickFilters').hidden = !$('#opickFilters').hidden; });
+  wirePickFiltering($('#opickDlg'), $('#opickFilterToggle'), () => { for (const k of Object.keys(opickFilters)) delete opickFilters[k]; }, renderOutfitPicker);
   $('#opickFilters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
     if (!k) return;
@@ -3649,7 +3766,7 @@ function wirePlanner() {
     renderOutfitPicker();
   });
   $('#opickFilters').addEventListener('click', (e) => {
-    if (onFilterDrop(e, opickFilters)) return renderOutfitPicker();
+    if (onFilterDrop(e, opickFilters)) return keepFilterScroll($('#opickFilters'), renderOutfitPicker);
     if (!e.target.closest('[data-reset-filters]')) return;
     for (const k of Object.keys(opickFilters)) delete opickFilters[k];
     renderOutfitPicker();
@@ -4417,7 +4534,7 @@ function wireEvents() {
   });
   $('#pickSearch').addEventListener('input', renderPicker);
   $('#pickSort').addEventListener('change', () => { localStorage.setItem('ks_psort', $('#pickSort').value); renderPicker(); });
-  $('#pickFilterToggle').addEventListener('click', () => { $('#pickFilters').hidden = !$('#pickFilters').hidden; });
+  wirePickFiltering($('#pickDlg'), $('#pickFilterToggle'), () => { pick.filters = {}; }, renderPicker);
   $('#pickFilters').addEventListener('change', (e) => {
     const k = e.target.dataset.filter;
     if (!k) return;
@@ -4425,7 +4542,7 @@ function wireEvents() {
     renderPicker();
   });
   $('#pickFilters').addEventListener('click', (e) => {
-    if (onFilterDrop(e, pick.filters)) return renderPicker();
+    if (onFilterDrop(e, pick.filters)) return keepFilterScroll($('#pickFilters'), renderPicker);
     if (!e.target.closest('[data-reset-filters]')) return;
     pick.filters = {};
     renderPicker();
@@ -4448,7 +4565,13 @@ function wireEvents() {
     const b = e.target.closest('[data-view]');
     if (!b) return;
     if (tab === 'outfits') { outfitView = b.dataset.view; localStorage.setItem('ks_outfitview', outfitView); }
-    else { itemView = b.dataset.view; localStorage.setItem('ks_itemview', itemView); }
+    else {
+      // „Titelbild“ hebt alle Tags auf; ein Tag schaltet sich an/aus (Titelbild ist dann automatisch abgewählt);
+      // bleibt nichts übrig, gilt wieder das Titelbild
+      const v = b.dataset.view;
+      itemView = !v ? [] : itemView.includes(v) ? itemView.filter((x) => x !== v) : [...itemView, v];
+      localStorage.setItem('ks_itemview', JSON.stringify(itemView));
+    }
     render();
   });
   $('#sort').addEventListener('change', () => { localStorage.setItem(sortKey(tab), $('#sort').value); render(); });
@@ -4505,7 +4628,7 @@ function wireEvents() {
   $('#filters').addEventListener('click', (e) => {
     {
       const [st, key] = tab === 'outfits' ? [outfitFilters, 'ks_ofilters'] : tab === 'wish' ? [wishFilters, 'ks_wfilters'] : [filters, 'ks_filters'];
-      if (onFilterDrop(e, st)) { localStorage.setItem(key, JSON.stringify(st)); return render(); }
+      if (onFilterDrop(e, st)) { localStorage.setItem(key, JSON.stringify(st)); return keepFilterScroll($('#filters'), render); }
     }
     if (!e.target.closest('[data-reset-filters]')) return;
     if (tab === 'outfits') {
@@ -4542,6 +4665,7 @@ function wireEvents() {
   // Auswahlfelder
   onFields('click', (e) => {
     const pick = e.target.closest('[data-pick]');
+    if (pick && pick.dataset.mg !== undefined) setMatActive(Number(pick.dataset.mg));
     if (pick) return openOptions(pick.dataset.pick);
     const chip = e.target.closest('[data-chip]');
     if (chip) {
@@ -4615,11 +4739,36 @@ function wireEvents() {
     renderPickFields();
   });
   onFields('input', (e) => {
+    if (!ed) return;
+    const nm = e.target.dataset?.matname;
+    if (nm !== undefined) { ed.matGroups[Number(nm)].name = e.target.value; return; }
     const m = e.target.dataset?.anteil;
-    if (m === undefined || !ed) return;
+    if (m === undefined) return;
+    const g = ed.matGroups[Number(e.target.dataset.mg) || 0];
     const v = e.target.value.trim();
-    if (v === '') delete ed.anteile[m]; else ed.anteile[m] = Math.max(0, Math.min(100, Number(v) || 0));
-    renderAnteilSum();
+    if (v === '') delete g.anteile[m]; else g.anteile[m] = Math.max(0, Math.min(100, Number(v) || 0));
+    renderAnteilSum(Number(e.target.dataset.mg) || 0);
+  });
+  // Materialgruppen: hinzufügen / entfernen
+  onFields('click', (e) => {
+    if (!ed) return;
+    if (e.target.closest('[data-matadd]')) {
+      syncMat();
+      const gs = ed.matGroups;
+      if (gs.length === 1 && !gs[0].name) gs[0].name = 'Obermaterial';
+      gs.push({ name: gs.length === 1 ? 'Futter' : '', vals: [], anteile: {} });
+      renderMatGroups();
+      return;
+    }
+    const del = e.target.closest('[data-matdel]');
+    if (del) {
+      syncMat();
+      const i = Number(del.dataset.matdel);
+      ed.matGroups.splice(i, 1);
+      ed.matActive = 0;
+      ed.vals.materialien = ed.matGroups[0].vals;
+      renderMatGroups();
+    }
   });
 
   // Kategorie-Auswahl
@@ -4894,6 +5043,15 @@ function wireEvents() {
 /* ---------------- Start ---------------- */
 /** Gespeicherte Filter auf die neue Kategorie-Einteilung umstellen (Shirts, Sweatshirtjacke/-weste) */
 function migrateSavedFilters() {
+  // 2.35: Unterteile neu geordnet
+  for (const [key, st] of [['ks_filters', filters], ['ks_wfilters', wishFilters]]) {
+    let ch = false;
+    const map = (v, fn) => (Array.isArray(v) ? [...new Set(v.map(fn))] : fn(v));
+    if (st.unterkategorie) { const n = map(st.unterkategorie, (x) => UNTER_SUB[x] || x); ch ||= JSON.stringify(n) !== JSON.stringify(st.unterkategorie); st.unterkategorie = n; }
+    if (st.typ) { const n = map(st.typ, (x) => UNTER_TYP[x]?.[0] ?? x); ch ||= JSON.stringify(n) !== JSON.stringify(st.typ); st.typ = n; }
+    if (st.schnitt) { const n = map(st.schnitt, (x) => SCHNITT_RENAME[x] || x); ch ||= JSON.stringify(n) !== JSON.stringify(st.schnitt); st.schnitt = n; }
+    if (ch) localStorage.setItem(key, JSON.stringify(st));
+  }
   for (const key of ['ks_filters', 'ks_wfilters']) {
     const f = readJson(key, null);
     if (!f || !['T-Shirts', 'Kurzarmshirts', 'Pullover und Strickjacken', 'Schmuck', 'Hoodies & Sweatshirts', 'Sonstiger Schmuck', 'Ketten', 'Piercings'].includes(f.unterkategorie)) continue;
