@@ -234,6 +234,7 @@ const PFLEGE_INFO = {
   'Ohne Chlor bleichen': 'Nur sauerstoffbasierte Bleichmittel, kein Chlor.',
   'Bleichen erlaubt': 'Jedes Bleichmittel ist erlaubt, auch Chlorbleiche.',
 };
+const PFLEGE_ICON_EXTRA = {};
 const PFLEGE_ICON = (() => {
   const tub = 'M3 9 q1.5-2 3 0 t3 0 t3 0 t3 0 t3 0 t3 0 M3.4 9 L5.5 20 H18.5 L20.6 9';
   const x = (a, b, c, d) => `<path d="M${a} ${b} L${c} ${d} M${c} ${b} L${a} ${d}"/>`;
@@ -304,10 +305,9 @@ const PFLEGE_ICON = (() => {
     'Bleichen erlaubt': tri,
   };
   const svg = (v) => `<svg class="careicon" viewBox="0 0 24 26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">${v}</svg>`;
-  const out = Object.fromEntries(Object.entries(ic).map(([k, v]) => [k, svg(v)]));
-  // Hängend trocknen: zusätzlich das ISO-Zeichen (Quadrat mit senkrechtem Strich)
-  out['Hängend trocknen'] += svg(`${sq}<path d="M12 7.5 V17.5"/>`);
-  return out;
+  // Zusätzliche Zeichen, die nur im Auswahlfenster neben dem eigentlichen Symbol stehen
+  PFLEGE_ICON_EXTRA['Hängend trocknen'] = svg(`${sq}<path d="M12 7.5 V17.5"/>`); // ISO: Quadrat mit senkrechtem Strich
+  return Object.fromEntries(Object.entries(ic).map(([k, v]) => [k, svg(v)]));
 })();
 
 /* Alle Länder (ISO 3166-1) – deutsche Namen über Intl, sortiert */

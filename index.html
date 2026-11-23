@@ -577,16 +577,20 @@
 
 <!-- Kamera in der App (merkt sich den Blitz) -->
 <dialog id="camDlg" class="camdlg">
-  <video id="camVideo" playsinline muted autoplay></video>
+  <div class="camstage" id="camStage"><video id="camVideo" playsinline muted autoplay></video></div>
   <div class="camtop">
     <button type="button" class="textbtn" data-close>Abbrechen</button>
-    <button type="button" class="chipbtn" id="camFlash" hidden></button>
+    <span class="camtopbtns">
+      <button type="button" class="chipbtn" id="camLight" hidden></button>
+      <button type="button" class="chipbtn" id="camFlash" hidden></button>
+    </span>
   </div>
   <p id="camMsg" class="cammsg" hidden></p>
   <div class="cambar">
+    <div class="camzoom"><input type="range" id="camZoom" min="1" max="4" step="0.1" value="1" aria-label="Zoom"><span id="camZoomVal">1,0×</span></div>
     <button type="button" class="chipbtn" id="camSystem">System-Kamera</button>
     <button type="button" class="shutter" id="camShot" aria-label="Foto aufnehmen"></button>
-    <span></span>
+    <button type="button" class="chipbtn camswitch" id="camSwitch" aria-label="Kamera wechseln" hidden>🔄 Wechseln</button>
   </div>
 </dialog>
 

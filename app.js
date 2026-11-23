@@ -3,7 +3,7 @@
  * Offline-first: Alles liegt zuerst lokal (IndexedDB) und wird mit
  * dem App-Ordner in OneDrive (Microsoft Graph) oder Dropbox synchronisiert.
  */
-const APP_VERSION = '2.38.0';
+const APP_VERSION = '2.38.2';
 
 
 /* Felder: feste Auswahl (optionen.js) oder Freitext mit Vorschlägen
@@ -2964,7 +2964,7 @@ function renderOptions() {
   const info = f.icon ? PFLEGE_INFO : f.info;
   const chips = (hits) => info
     // Waschhinweise, Schnitte: eine Zeile je Eintrag, mit „?“ für die ausführliche Erklärung
-    ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.icon ? careIcon(o) : ''}${optKey === 'schnitt' ? schnittSvg(o, ed.kat.kategorie) : ''}${esc(o)}</button>${
+    ? `<div class="ochips icons">${hits.map((o) => `<div class="orowopt"><button type="button" class="ochip${sel.has(o) ? ' active' : ''}" data-val="${esc(o)}">${f.icon ? careIcon(o) + (PFLEGE_ICON_EXTRA[o] || '') : ''}${optKey === 'schnitt' ? schnittSvg(o, ed.kat.kategorie) : ''}${esc(o)}</button>${
       info[o] ? `<button type="button" class="kinfo${optInfo === o ? ' on' : ''}" data-optinfo="${esc(o)}" aria-label="Was bedeutet ${esc(o)}?" aria-expanded="${optInfo === o}">?</button>` : ''}${
       optInfo === o ? `<p class="kexpl">${esc(info[o])}</p>` : ''}</div>`).join('')}</div>`
     : `<div class="ochips${f.swatch ? ' swatches' : ''}">${hits.map((o) =>
@@ -4318,30 +4318,40 @@ function wireDrop() {
  * „Foto aufnehmen“ öffnet eine eigene Kamera statt der System-Kamera, damit die App die Blitz-Einstellung der
  * letzten Aufnahme behalten kann (ks_flash: off | auto | on). Ohne Kamera-Zugriff oder per Knopf geht es weiter
  * mit der System-Kamera. Das Foto wird dem ursprünglichen Datei-Feld übergeben, die weitere Verarbeitung bleibt gleich. */
-const Cam = { stream: null, track: null, ic: null, fill: [], torch: false, modes: ['off'], input: null, bypass: false };
+const Cam = { stream: null, track: null, ic: null, fill: [], torch: false, modes: ['off'], input: null, bypass: false,
+  devices: [], zoomCaps: null, zoom: 1, digital: 1, light: false };
 const camSupported = () => !!navigator.mediaDevices?.getUserMedia && typeof DataTransfer === 'function';
 const FLASH_LABEL = { off: 'Blitz aus', auto: 'Blitz auto', on: 'Blitz an' };
+const DIGITAL_MAX = 4; // Digitalzoom, wenn die Kamera keinen eigenen Zoom anbietet
 const flashMode = () => { const m = localStorage.getItem('ks_flash') || 'off'; return Cam.modes.includes(m) ? m : 'off'; };
-function renderFlash() {
+function renderCamControls() {
   const b = $('#camFlash');
   b.hidden = Cam.modes.length < 2; // Gerät/Browser kann den Blitz nicht steuern
   b.textContent = `⚡ ${FLASH_LABEL[flashMode()]}`;
   b.classList.toggle('on', flashMode() !== 'off');
+  $('#camLight').hidden = !Cam.torch;
+  $('#camLight').classList.toggle('on', Cam.light);
+  $('#camLight').textContent = Cam.light ? '💡 Licht an' : '💡 Licht';
+  $('#camSwitch').hidden = Cam.devices.length < 2;
+  const z = Cam.zoomCaps;
+  const [min, max, step] = z ? [z.min, z.max, z.step || 0.1] : [1, DIGITAL_MAX, 0.1];
+  const r = $('#camZoom');
+  r.min = min; r.max = max; r.step = step;
+  r.value = z ? Cam.zoom : Cam.digital;
+  $('#camZoomVal').textContent = `${Number(r.value).toFixed(1).replace('.', ',')}×`;
 }
 function camMsg(text) { $('#camMsg').hidden = !text; $('#camMsg').textContent = text || ''; }
-async function openCamera(input) {
-  Cam.input = input;
-  camMsg('');
-  $('#camFlash').hidden = true;
-  $('#camShot').disabled = true;
-  $('#camDlg').showModal();
+/** Kamera starten (deviceId: bestimmte Kamera, sonst die gemerkte bzw. die Rückkamera) */
+async function startCamStream(deviceId = localStorage.getItem('ks_camId') || '') {
+  for (const t of Cam.stream?.getTracks() || []) t.stop();
+  const size = { width: { ideal: 4096 }, height: { ideal: 3072 } };
   try {
-    Cam.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 4096 }, height: { ideal: 3072 } } });
+    Cam.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: { ideal: 'environment' }, ...size } });
   } catch (e) {
-    console.warn('Kamera', e);
-    return camMsg('Die Kamera lässt sich hier nicht öffnen (Zugriff verweigert oder nicht verfügbar). Nutze „System-Kamera“.');
+    if (!deviceId) throw e;
+    localStorage.removeItem('ks_camId'); // gemerkte Kamera gibt es nicht mehr
+    Cam.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, ...size } });
   }
-  if (!$('#camDlg').open) return stopCamera();
   Cam.track = Cam.stream.getVideoTracks()[0];
   const v = $('#camVideo');
   v.srcObject = Cam.stream;
@@ -4350,9 +4360,41 @@ async function openCamera(input) {
   if ('ImageCapture' in window) {
     try { Cam.ic = new ImageCapture(Cam.track); Cam.fill = (await Cam.ic.getPhotoCapabilities()).fillLightMode || []; } catch { /* ohne Fotomodus */ }
   }
-  try { Cam.torch = !!Cam.track.getCapabilities?.().torch; } catch { Cam.torch = false; }
+  let caps = {};
+  try { caps = Cam.track.getCapabilities?.() || {}; } catch { /* alter Browser */ }
+  Cam.torch = !!caps.torch;
+  Cam.zoomCaps = caps.zoom && caps.zoom.max > caps.zoom.min ? caps.zoom : null;
+  Cam.zoom = Cam.zoomCaps ? Math.max(Cam.zoomCaps.min, Math.min(Cam.zoomCaps.max, Cam.track.getSettings?.().zoom || Cam.zoomCaps.min)) : 1;
+  setDigitalZoom(1);
   Cam.modes = ['off', ...(Cam.fill.includes('auto') ? ['auto'] : []), ...(Cam.fill.includes('flash') || Cam.torch ? ['on'] : [])];
-  renderFlash();
+  if (Cam.torch && Cam.light) await setTorch(true);
+  if (!Cam.devices.length) Cam.devices = (await navigator.mediaDevices.enumerateDevices().catch(() => [])).filter((d) => d.kind === 'videoinput');
+  renderCamControls();
+}
+async function setTorch(on) { try { await Cam.track.applyConstraints({ advanced: [{ torch: on }] }); return true; } catch { return false; } }
+function setDigitalZoom(z) {
+  Cam.digital = Math.max(1, Math.min(DIGITAL_MAX, z));
+  $('#camVideo').style.transform = Cam.digital > 1 ? `scale(${Cam.digital})` : '';
+}
+async function setZoom(z) {
+  if (Cam.zoomCaps) {
+    Cam.zoom = Math.max(Cam.zoomCaps.min, Math.min(Cam.zoomCaps.max, z));
+    try { await Cam.track.applyConstraints({ advanced: [{ zoom: Cam.zoom }] }); } catch { /* egal */ }
+  } else setDigitalZoom(z);
+  renderCamControls();
+}
+async function openCamera(input) {
+  Cam.input = input;
+  Cam.light = localStorage.getItem('ks_light') === '1';
+  camMsg('');
+  for (const id of ['#camFlash', '#camLight', '#camSwitch']) $(id).hidden = true;
+  $('#camShot').disabled = true;
+  $('#camDlg').showModal();
+  try { await startCamStream(); } catch (e) {
+    console.warn('Kamera', e);
+    return camMsg('Die Kamera lässt sich hier nicht öffnen (Zugriff verweigert oder nicht verfügbar). Nutze „System-Kamera“.');
+  }
+  if (!$('#camDlg').open) return stopCamera();
   $('#camShot').disabled = false;
 }
 function stopCamera() {
@@ -4360,29 +4402,33 @@ function stopCamera() {
   Cam.stream = null; Cam.track = null; Cam.ic = null;
   $('#camVideo').srcObject = null;
 }
-/** Standbild aus der Vorschau (wenn der Browser keine Fotoaufnahme kennt) */
-function grabFrame() {
-  const v = $('#camVideo');
-  const c = newCanvas(v.videoWidth, v.videoHeight);
-  c.getContext('2d').drawImage(v, 0, 0);
+/** Bild auf den Ausschnitt des Digitalzooms zuschneiden */
+async function cropDigital(src) {
+  const z = Cam.digital;
+  const w = src.videoWidth || src.width, h = src.videoHeight || src.height;
+  const cw = Math.round(w / z), ch = Math.round(h / z);
+  const c = newCanvas(cw, ch);
+  c.getContext('2d').drawImage(src, (w - cw) / 2, (h - ch) / 2, cw, ch, 0, 0, cw, ch);
   return toBlob(c, 'image/jpeg', 0.92);
 }
+/** Standbild aus der Vorschau (wenn der Browser keine Fotoaufnahme kennt) */
+const grabFrame = () => cropDigital($('#camVideo'));
 async function camShoot() {
   const mode = flashMode();
   $('#camShot').disabled = true;
   let blob = null;
-  const torch = async (on) => { try { await Cam.track.applyConstraints({ advanced: [{ torch: on }] }); } catch { /* egal */ } };
+  const pulse = mode === 'on' && Cam.torch && !Cam.light; // Blitz über die Taschenlampe
   try {
     const fillMode = mode === 'on' ? 'flash' : mode;
-    if (Cam.ic && Cam.fill.includes(fillMode)) {
+    if (Cam.ic && Cam.fill.includes(fillMode) && !(Cam.light && mode === 'off')) {
       blob = await Cam.ic.takePhoto({ fillLightMode: fillMode });
     } else {
-      // Blitz über die Taschenlampe, falls der Fotomodus ihn nicht kennt
-      if (mode === 'on' && Cam.torch) { await torch(true); await sleep(400); }
+      if (pulse && !Cam.fill.includes('flash')) { await setTorch(true); await sleep(400); }
       blob = Cam.ic ? await Cam.ic.takePhoto().catch(() => null) : null;
       if (!blob) blob = await grabFrame();
-      if (mode === 'on' && Cam.torch) await torch(false);
+      if (pulse && !Cam.fill.includes('flash')) await setTorch(false);
     }
+    if (blob && Cam.digital > 1 && Cam.ic) blob = await cropDigital(await loadBitmap(blob));
   } catch (e) {
     console.warn('Aufnahme', e);
     blob = await grabFrame().catch(() => null);
@@ -4409,8 +4455,40 @@ function wireCamera() {
   $('#camFlash').addEventListener('click', () => {
     const i = Cam.modes.indexOf(flashMode());
     localStorage.setItem('ks_flash', Cam.modes[(i + 1) % Cam.modes.length]);
-    renderFlash();
+    renderCamControls();
   });
+  // Dauerlicht (Taschenlampe) – bleibt an, bis man es ausschaltet; wird gemerkt
+  $('#camLight').addEventListener('click', async () => {
+    Cam.light = !Cam.light;
+    if (!await setTorch(Cam.light)) { Cam.light = false; toast('Das Licht lässt sich hier nicht einschalten.'); }
+    localStorage.setItem('ks_light', Cam.light ? '1' : '0');
+    renderCamControls();
+  });
+  // Kamera wechseln (vorne/hinten, bei manchen Handys auch Weitwinkel/Tele) – die gewählte wird gemerkt
+  $('#camSwitch').addEventListener('click', async () => {
+    const cur = Cam.track?.getSettings?.().deviceId;
+    const i = Cam.devices.findIndex((d) => d.deviceId === cur);
+    const next = Cam.devices[(i + 1) % Cam.devices.length];
+    if (!next) return;
+    $('#camShot').disabled = true;
+    try { await startCamStream(next.deviceId); localStorage.setItem('ks_camId', next.deviceId); } catch (e) { console.warn(e); toast('Kamera konnte nicht gewechselt werden.'); }
+    $('#camShot').disabled = false;
+  });
+  // Zoom: Regler und Zwei-Finger-Geste
+  $('#camZoom').addEventListener('input', (e) => setZoom(Number(e.target.value)));
+  const pts = new Map();
+  let pinch = null;
+  const stage = $('#camStage');
+  const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+  stage.addEventListener('pointerdown', (e) => { pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (pts.size === 2) pinch = { d: dist(), z: Cam.zoomCaps ? Cam.zoom : Cam.digital }; });
+  stage.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pts.size === 2) setZoom(pinch.z * (dist() / pinch.d));
+  });
+  const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
   $('#camSystem').addEventListener('click', () => {
     const input = Cam.input;
     $('#camDlg').close();
